@@ -63,6 +63,7 @@ Static datasets shipped in the repo for an out-of-the-box experience. **None are
 |---------|--------|---------|-----------------|-------------|
 | **Datacenters** (~4.3K) | `datacenters/` | **ODbL 1.0** (OpenStreetMap extract) | ✅ (attribution + share-alike on data) | "© OpenStreetMap contributors" |
 | **Dams** (704) | `dams/` | **ODbL 1.0** (OpenInfraMap / OSM extract) | ✅ (attribution + share-alike on data) | "© OpenStreetMap contributors" (+ Open Infrastructure Map) |
+| **EIA Power Plants** (13,446 US plants, EIA-860/860M via [EIA Atlas](https://atlas.eia.gov/datasets/bf5c5110b1b944d299bb683cdbd02d2a)) | `eia_power_plants/` | **Public domain** (US Government work) | ✅ (no restrictions) | "U.S. Energy Information Administration" (courtesy; not legally required) |
 | **TeleGeography Submarine Cable Map** (712 cables + 1,917 landing points) | `telegeography_submarine_cables/` | **CC BY-NC-SA 3.0** | ❌ **NonCommercial — remove for commercial use** | "© TeleGeography — submarinecablemap.com" |
 | **Natural Earth physical regions** (1,046 land + 292 marine named polygons) | `natural_earth/` | **Public domain** | ✅ (no restrictions) | "Made with Natural Earth" (courtesy credit — not legally required) |
 | **DataSF Analysis Neighborhoods** (41 SF neighborhood polygons) | `neighborhoods/` | **PDDL 1.0** (public domain) | ✅ (no restrictions) | "City & County of San Francisco — DataSF" (courtesy — not legally required) |

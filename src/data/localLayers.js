@@ -3,7 +3,9 @@ import { createInfrastructureLayers } from './infrastructure.js';
 import { createFirmsHeatmapLayer } from './firmsHeatmap.js';
 import submarineCablesLayer from './telegeographySubmarineCables.js';
 
-const [datacenters, dams] = createInfrastructureLayers(localGeoJsonServices);
+const [datacenters, dams, powerPlants] = createInfrastructureLayers(
+  localGeoJsonServices,
+);
 
 // Live NASA FIRMS fires (VIIRS ×3 NRT via the /api/firms proxy). The id keeps
 // the historical `local-` prefix for persistence + voice-tool-enum compat,
@@ -18,6 +20,7 @@ const fires = createFirmsHeatmapLayer({
 export default [
   datacenters,
   dams,
+  powerPlants,
   submarineCablesLayer,
   fires,
 ];

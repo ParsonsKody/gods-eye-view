@@ -169,6 +169,13 @@ export const DATA_CREDITS = [
       '(ODbL 1.0) + Open Infrastructure Map',
   },
   {
+    key: 'eia-power-plants',
+    html:
+      'Power plants: ' +
+      '<a href="https://atlas.eia.gov/datasets/bf5c5110b1b944d299bb683cdbd02d2a" target="_blank" rel="noopener">U.S. Energy Information Administration (EIA-860)</a> ' +
+      '(public domain)',
+  },
+  {
     key: 'firms',
     html:
       'Active fires: NASA FIRMS — we acknowledge the use of data and/or imagery ' +
