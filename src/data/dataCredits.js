@@ -176,6 +176,13 @@ export const DATA_CREDITS = [
       '(public domain)',
   },
   {
+    key: 'eia-transmission-lines',
+    html:
+      'Transmission lines: ' +
+      '<a href="https://atlas.eia.gov/datasets/d4090758322c4d32a4cd002ffaa0aa12_0/about" target="_blank" rel="noopener">EIA Atlas / HIFLD archive (Sep 2024)</a> ' +
+      '(US Government work)',
+  },
+  {
     key: 'firms',
     html:
       'Active fires: NASA FIRMS — we acknowledge the use of data and/or imagery ' +

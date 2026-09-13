@@ -248,5 +248,7 @@
   "src/ui/styles/cockpit.css",
   "src/ui/styles/command-dock-compact.css",
   "src/app/stateChannel.js",
-  "src/app/stateChannel.test.mjs"
+  "src/app/stateChannel.test.mjs",
+  "src/data/transmissionLines.js",
+  "src/data/transmissionLines.test.mjs"
 ]

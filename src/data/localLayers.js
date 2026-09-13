@@ -2,6 +2,7 @@ import { localGeoJsonServices } from './localGeojson.js';
 import { createInfrastructureLayers } from './infrastructure.js';
 import { createFirmsHeatmapLayer } from './firmsHeatmap.js';
 import submarineCablesLayer from './telegeographySubmarineCables.js';
+import transmissionLinesLayer from './transmissionLines.js';
 
 const [datacenters, dams, powerPlants] = createInfrastructureLayers(
   localGeoJsonServices,
@@ -21,6 +22,7 @@ export default [
   datacenters,
   dams,
   powerPlants,
+  transmissionLinesLayer,
   submarineCablesLayer,
   fires,
 ];
