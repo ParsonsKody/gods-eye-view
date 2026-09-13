@@ -177,6 +177,10 @@ const LAYER_ALIASES = new Map([
   ['transmission lines', 'eia-transmission-lines'],
   ['transmission', 'eia-transmission-lines'],
   ['power lines', 'eia-transmission-lines'],
+  ['lmp', 'iso-lmp'],
+  ['congestion', 'iso-lmp'],
+  ['prices', 'iso-lmp'],
+  ['nodal prices', 'iso-lmp'],
   ['submarine cables', 'telegeography-submarine-cables'],
   ['cables', 'telegeography-submarine-cables'],
   ['telegeography', 'telegeography-submarine-cables'],
@@ -3265,6 +3269,7 @@ function layerTitle(layerId) {
   if (layerId === 'local-dams') return 'Dam';
   if (layerId === 'local-power-plants') return 'Power Plant';
   if (layerId === 'eia-transmission-lines') return 'Transmission Line';
+  if (layerId === 'iso-lmp') return 'Pricing Node';
   if (layerId === 'telegeography-submarine-cables') return 'Submarine Cable';
   if (layerId === 'local-firms') return 'Active Fire';
   return layerId || 'Entity';

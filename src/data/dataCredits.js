@@ -183,6 +183,14 @@ export const DATA_CREDITS = [
       '(US Government work)',
   },
   {
+    key: 'iso-lmp',
+    html:
+      'ISO congestion: ' +
+      '<a href="https://pricecontourmap.spp.org/pricecontourmap/" target="_blank" rel="noopener">SPP price contour map</a> + ' +
+      '<a href="https://www.nyiso.com/real-time-dashboard" target="_blank" rel="noopener">NYISO real-time LBMP</a> ' +
+      '(public ISO market data)',
+  },
+  {
     key: 'firms',
     html:
       'Active fires: NASA FIRMS — we acknowledge the use of data and/or imagery ' +

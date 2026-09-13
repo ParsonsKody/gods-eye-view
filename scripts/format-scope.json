@@ -250,5 +250,9 @@
   "src/app/stateChannel.js",
   "src/app/stateChannel.test.mjs",
   "src/data/transmissionLines.js",
-  "src/data/transmissionLines.test.mjs"
+  "src/data/transmissionLines.test.mjs",
+  "src/data/lmpFeeds.js",
+  "src/data/lmpFeeds.test.mjs",
+  "src/data/isoLmp.js",
+  "server/providers/lmp.js"
 ]
