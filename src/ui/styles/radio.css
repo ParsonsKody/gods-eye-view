@@ -769,6 +769,19 @@
   opacity: 0.7;
 }
 
+.data-toggle-chip.chip-info {
+  cursor: default;
+  color: var(--text-secondary, #b8c4d0);
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.data-toggle-chip.chip-info:hover,
+.data-toggle-chip.chip-info:focus-visible {
+  color: var(--text-primary, #e8eef4);
+  background: rgba(255, 255, 255, 0.08);
+}
+
 .data-toggle-chip.chip-loading {
   color: var(--text-secondary);
   border-color: rgba(255, 255, 255, 0.18);

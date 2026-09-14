@@ -173,15 +173,20 @@ export const DATA_CREDITS = [
     html:
       'Power plants: ' +
       '<a href="https://atlas.eia.gov/datasets/bf5c5110b1b944d299bb683cdbd02d2a" target="_blank" rel="noopener">U.S. Energy Information Administration (EIA-860)</a> + ' +
-      '<a href="https://www.eia.gov/electricity/data/eia923/" target="_blank" rel="noopener">EIA-923 net generation</a> ' +
-      '(public domain)',
+      '<a href="https://www.eia.gov/electricity/data/eia923/" target="_blank" rel="noopener">EIA-923 net generation</a> + ' +
+      '<a href="https://www.eia.gov/electricity/data/eia860m/" target="_blank" rel="noopener">EIA-860M balancing authority</a> ' +
+      '(public domain); live rows: ' +
+      '<a href="https://www.nrc.gov/reading-rm/doc-collections/event-status/reactor-status/" target="_blank" rel="noopener">NRC power reactor status</a> + ' +
+      '<a href="https://www.nyiso.com/real-time-dashboard" target="_blank" rel="noopener">NYISO real-time LBMP, fuel mix and load</a> + ' +
+      '<a href="https://portal.spp.org/pages/generation-mix" target="_blank" rel="noopener">SPP generation mix</a>',
   },
   {
     key: 'eia-transmission-lines',
     html:
       'Transmission lines: ' +
       '<a href="https://atlas.eia.gov/datasets/d4090758322c4d32a4cd002ffaa0aa12_0/about" target="_blank" rel="noopener">EIA Atlas / HIFLD archive (Sep 2024)</a> ' +
-      '(US Government work)',
+      '(US Government work); outages: ' +
+      '<a href="https://www.nyiso.com/real-time-dashboard" target="_blank" rel="noopener">NYISO real-time transmission outages</a>',
   },
   {
     key: 'iso-lmp',

@@ -11,7 +11,7 @@ Script: `tools/energy/fetch_plants.py`
 
 Feature count: 13446
 
-Pulled: 2026-09-13
+Pulled: 2026-09-14
 
 Data period: 202502
 
@@ -21,7 +21,17 @@ Fields: `name`, `plant_code` (EIA plant id), `fuel` (short key used for
 colour: gas, coal, nuclear, wind, solar, hydro, storage, oil, geothermal,
 biomass, other), `prim_source` (EIA primary energy source text), `tech`,
 `total_mw` (nameplate, all generators at the site), `state`, `utility`,
-`period` (EIA-860M vintage, YYYYMM).
+`period` (EIA-860M vintage, YYYYMM), `ba` (balancing authority code from
+EIA-860M, empty when the plant is not in that month's inventory).
+
+Balancing authority: 13086 plants from EIA-860M `july_generator2026.xlsx`
+
+Reactor units: 94 NRC units over 54 plants, pulled 2026-09-14
+
+Sidecar `reactor_units.json` (script: `tools/energy/build_reactors.py`):
+NRC power reactor unit name to EIA plant code and coordinates, so the live
+NRC daily power percentages (`/api/reactors`) land on the right plant.
+Palisades is skipped until it appears in the 860M inventory.
 
 Capacity factors: 3571 plants, EIA-923 2026-01 to 2026-06 (4344 h), pulled 2026-09-14
 

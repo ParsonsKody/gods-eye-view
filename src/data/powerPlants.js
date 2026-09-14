@@ -10,20 +10,39 @@ import {
 } from './localGeojsonCore.js';
 import { shouldRecomputeInfraLod } from './localGeojsonLod.js';
 import { POWER_PLANT_FUEL_ICONS } from './powerPlantIcons.js';
+import { createPlantMarkerSpriteCache } from './plantMarkerSprite.js';
+import { requestWorldFocus } from '../worldFocus.js';
+import { parseNyisoNodes } from './isoLmp.js';
+import { formatIntervalEt, money } from './lmpFeeds.js';
+import { fleetNameplateByBaFuel, fleetRow, shortDate } from './gridFeeds.js';
 
 /**
  * US power plants (EIA-860 / 860M, bundled by tools/energy/fetch_plants.py).
  *
- * Every plant is one PointPrimitive at ellipsoid height, coloured by primary
- * fuel and sized by nameplate MW, with no stem: on this map lines mean
- * transmission lines. All 13K dots are always drawn (a cheap pre-render
+ * Every plant is one billboard at ellipsoid height: a disc carrying the
+ * fuel glyph in the fuel colour (plantMarkerSprite.js), sized by nameplate
+ * MW, with no stem: on this map lines mean transmission lines. All 13K
+ * markers are always drawn (a cheap pre-render
  * occluder walk hides the far side of the globe); only the ambient cards
  * are budgeted, through the same grid cohort the other local layers use.
- * Hovering a dot shows the detail card (title plus a label and value
- * table), clicking pins it. The table also carries a capacity factor from
+ * Hovering a marker shows the detail card (title plus a label and value
+ * table), clicking pins it, double-clicking flies the camera to the
+ * plant. The table also carries a capacity factor from
  * the EIA-923 sidecar (capacity_factors.json,
  * tools/energy/fetch_capacity_factors.py) for the plants on EIA's monthly
  * survey.
+ *
+ * Live rows (polled every 5 minutes while the layer is on, all keyless):
+ * - Output: NRC daily reactor power for nuclear plants (/api/reactors,
+ *   joined by reactor_units.json). No free feed publishes live MW for any
+ *   other plant, so no other plant gets an Output row.
+ * - RT LBMP and Congestion: the NYISO generator-bus price at the plant
+ *   (/api/lmp?iso=nyiso), joined to the nearest bundled NYISO gen node
+ *   within NYISO_NODE_JOIN_KM; the node's zone becomes the Zone row.
+ * - Fleet: the ISO fuel-mix output of the plant's fuel class over the
+ *   bundled nameplate of that class (/api/grid), for NYISO and SPP plants
+ *   (the `ba` field from EIA-860M). Labelled as the fleet, never as the
+ *   plant.
  */
 
 const plantsUrl = new URL(
@@ -34,6 +53,17 @@ const capacityFactorsUrl = new URL(
   './local_data/eia_power_plants/capacity_factors.json',
   import.meta.url,
 ).href;
+const reactorUnitsUrl = new URL(
+  './local_data/eia_power_plants/reactor_units.json',
+  import.meta.url,
+).href;
+const nyisoNodesUrl = new URL(
+  './local_data/iso_nodes/nyiso.geojsonl',
+  import.meta.url,
+).href;
+const GRID_API_URL = '/api/grid';
+const REACTORS_API_URL = '/api/reactors';
+const LMP_API_URL = '/api/lmp';
 
 export const POWER_PLANTS_LAYER_ID = 'local-power-plants';
 export const PLANT_OVERLAY_SOURCE_ID = 'local-power-plants';
@@ -42,6 +72,50 @@ export const PLANT_LABEL_MAX = 600;
 export const PLANT_LABEL_GRID_PX = 140;
 export const PLANT_LABEL_ACCENT = '#ffb300';
 const PARSE_CHUNK = 1500;
+/**
+ * A NYISO gen node this close to a plant is that plant's price node; a
+ * node whose name shares a word with the plant counts out to
+ * NYISO_NODE_NAME_KM (EIA and NYISO place the same site a couple of km
+ * apart).
+ */
+export const NYISO_NODE_JOIN_KM = 1.5;
+export const NYISO_NODE_NAME_KM = 5;
+const NAME_STOP_WORDS = new Set([
+  'POWER',
+  'PLANT',
+  'STATION',
+  'ENERGY',
+  'CENTER',
+  'GENERATING',
+  'GENERATION',
+  'NUCLEAR',
+  'PROJECT',
+  'SOLAR',
+  'WIND',
+  'FARM',
+  'HYDRO',
+  'HYDROELECTRIC',
+  'ELECTRIC',
+  'FACILITY',
+  'UNIT',
+  'LLC',
+  'CORP',
+  'PARK',
+  'NORTH',
+  'SOUTH',
+  'EAST',
+  'WEST',
+  'LAKE',
+  'RIVER',
+  'CREEK',
+  'POINT',
+  'LONG',
+  'ISLAND',
+  'NEW',
+  'YORK',
+]);
+const KM_PER_DEG_LAT = 110.57;
+const KM_PER_DEG_LON_EQ = 111.32;
 const WALK_INTERVAL_MS = 450;
 const OVERLAY_MAX_DISTANCE_M = 14000000;
 const OVERLAY_FADE_START_RATIO = 250000 / OVERLAY_MAX_DISTANCE_M;
@@ -85,20 +159,22 @@ const POWER_PLANT_FUEL_BLURBS = Object.freeze({
 });
 
 /**
- * Anchor style for one plant: colour by fuel, size by nameplate MW
- * (6 px under 10 MW up to 16 px at 2,000 MW and above).
+ * Anchor style for one plant: colour by fuel, size by nameplate MW.
+ * `pixelSize` is the legacy dot ramp (6 px under 10 MW up to 16 px at
+ * 2,000 MW and above); `markerPx` is the glyph marker edge over the same
+ * ramp (12 px to 26 px: a glyph under 12 px is unreadable).
  * @param {object} props Plant feature properties.
- * @returns {{color:string,pixelSize:number}}
+ * @returns {{color:string,pixelSize:number,markerPx:number}}
  */
 export function powerPlantStyle(props) {
   const color =
     POWER_PLANT_FUEL_COLORS[props?.fuel] || POWER_PLANT_FUEL_COLORS.other;
   const mw = Number(props?.total_mw);
   const scaled = Number.isFinite(mw) && mw > 0 ? Math.log10(mw) : 0;
-  const pixelSize = Math.round(
-    6 + 10 * Math.min(1, Math.max(0, (scaled - 1) / 2.3)),
-  );
-  return { color, pixelSize };
+  const t = Math.min(1, Math.max(0, (scaled - 1) / 2.3));
+  const pixelSize = Math.round(6 + 10 * t);
+  const markerPx = Math.round(12 + 14 * t);
+  return { color, pixelSize, markerPx };
 }
 
 /** Pick ids of this layer. */
@@ -222,6 +298,158 @@ export function capacityFactorLine(record, meta) {
   return cf ? `CF ${cf.pct} · ${cf.energy} ${cf.period}` : null;
 }
 
+/**
+ * Parse the reactor sidecar into plant code -> NRC units.
+ * @param {string} text JSON `{units:[{unit, plant_code, ba, lon, lat}]}`.
+ * @returns {Map<string, Array<{unit:string, ba:string}>>}
+ */
+export function parseReactorUnits(text) {
+  const map = new Map();
+  let json;
+  try {
+    json = JSON.parse(String(text || ''));
+  } catch {
+    return map;
+  }
+  for (const row of json?.units || []) {
+    if (!row?.unit || row.plant_code == null) continue;
+    const key = String(row.plant_code);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push({ unit: String(row.unit), ba: String(row.ba || '') });
+  }
+  return map;
+}
+
+/**
+ * Attach the NYISO generator nodes within `maxKm` of each NYISO plant
+ * (`record.nyisoPtids`, nearest first) and the nearest node's zone
+ * (`record.zone`).
+ * @param {object[]} records Plant records with `ba`, `lon`, `lat`.
+ * @param {Map<string, {lon:number, lat:number, zone:string}>} nodes From parseNyisoNodes.
+ * @param {number} [maxKm]
+ * @returns {number} Plants that gained a node.
+ */
+export function joinNyisoNodes(
+  records,
+  nodes,
+  { maxKm = NYISO_NODE_JOIN_KM, nameKm = NYISO_NODE_NAME_KM } = {},
+) {
+  if (!nodes?.size) return 0;
+  const list = [...nodes.entries()].map(([id, node]) => [
+    id,
+    node,
+    String(node.name || '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, ''),
+  ]);
+  let joined = 0;
+  for (const record of records || []) {
+    if (record?.ba !== 'NYIS') continue;
+    const tokens = String(record.name || '')
+      .toUpperCase()
+      .split(/[^A-Z0-9]+/)
+      .filter((w) => w.length >= 4 && !NAME_STOP_WORDS.has(w))
+      .map((w) => w.slice(0, 6));
+    const kmPerDegLon =
+      KM_PER_DEG_LON_EQ * Math.cos((record.lat * Math.PI) / 180);
+    const near = [];
+    const named = [];
+    for (const [id, node, name] of list) {
+      const dx = (node.lon - record.lon) * kmPerDegLon;
+      const dy = (node.lat - record.lat) * KM_PER_DEG_LAT;
+      const km = Math.sqrt(dx * dx + dy * dy);
+      if (km > nameKm) continue;
+      const hit = { id, km, zone: node.zone };
+      if (tokens.some((t) => name.includes(t))) named.push(hit);
+      else if (km <= maxKm) near.push(hit);
+    }
+    const picks = named.length ? named : near;
+    if (!picks.length) continue;
+    picks.sort((a, b) => a.km - b.km);
+    record.nyisoPtids = picks.map((n) => n.id);
+    record.zone = picks[0].zone || '';
+    joined += 1;
+  }
+  return joined;
+}
+
+/** `Nine Mile Point 2` -> `U2`; a unit without a number keeps its name. */
+function unitLabel(unit) {
+  const m = /\s(\d+)$/.exec(String(unit || ''));
+  return m ? `U${m[1]}` : String(unit || '');
+}
+
+/**
+ * NRC output for a nuclear plant: the mean of its units' percent power.
+ * @param {object} record
+ * @param {{reactors?:{reportDate:string, units:object}|null, reactorUnits?:Map<string, object[]>}|null} live
+ * @returns {{pct:number, units:Array<{label:string, pct:number}>, date:string}|null}
+ */
+export function reactorOutput(record, live) {
+  const units = live?.reactorUnits?.get(String(record?.plant_code ?? ''));
+  const status = live?.reactors?.units;
+  if (!units?.length || !status) return null;
+  const rows = [];
+  for (const u of units) {
+    const pct = Number(status[u.unit]);
+    if (Number.isFinite(pct)) rows.push({ label: unitLabel(u.unit), pct });
+  }
+  if (!rows.length) return null;
+  const mean = Math.round(
+    rows.reduce((sum, r) => sum + r.pct, 0) / rows.length,
+  );
+  return { pct: mean, units: rows, date: shortDate(live.reactors.reportDate) };
+}
+
+/** The plant's NYISO price node: the joined node with the largest |congestion|. */
+function priceNode(record, live) {
+  const byPtid = live?.lmp?.byPtid;
+  if (!byPtid || !record?.nyisoPtids?.length) return null;
+  let best = null;
+  for (const ptid of record.nyisoPtids) {
+    const node = byPtid.get(String(ptid));
+    if (!node || !Number.isFinite(node.lmp)) continue;
+    if (!best || Math.abs(node.mcc || 0) > Math.abs(best.mcc || 0)) best = node;
+  }
+  return best;
+}
+
+/**
+ * Live rows for one plant (empty without live data): Output (nuclear,
+ * NRC), RT LBMP and Congestion (NYISO plants with a price node), Fleet
+ * (NYISO and SPP plants).
+ * @param {object} record
+ * @param {object|null} live `{nyiso, spp, reactors, lmp, reactorUnits, nameplate}`.
+ * @returns {Array<[string, string]>}
+ */
+export function plantLiveRows(record, live) {
+  if (!live) return [];
+  const rows = [];
+  const output = reactorOutput(record, live);
+  if (output) {
+    const units =
+      output.units.length > 1
+        ? output.units.map((u) => `${u.label} ${u.pct}%`).join(' · ') + ' · '
+        : '';
+    rows.push(['Output', `${output.pct}% · ${units}NRC ${output.date}`]);
+  }
+  const node = priceNode(record, live);
+  if (node) {
+    const when = formatIntervalEt('nyiso', live.lmp.interval);
+    rows.push(['RT LBMP', `${money(node.lmp)}${when ? ` · ${when}` : ''}`]);
+    rows.push(['Congestion', `${money(node.mcc, { signed: true })}/MWh`]);
+  }
+  const mix =
+    record?.ba === 'NYIS'
+      ? live.nyiso?.fuelMix
+      : record?.ba === 'SWPP'
+        ? live.spp?.fuelMix
+        : null;
+  const fleet = fleetRow(record, mix, live.nameplate);
+  if (fleet) rows.push(['Fleet', fleet]);
+  return rows;
+}
+
 function mwText(mw) {
   const value = Number(mw);
   return Number.isFinite(value) && value > 0
@@ -235,41 +463,52 @@ function techText(record) {
 
 /**
  * Label and value table for the hover and pinned card (the Yes Energy
- * generator card shape). Rows without a value are left out; the CF and
- * Generation rows need the EIA-923 sidecar.
+ * generator card shape). Rows without a value are left out; the live rows
+ * need `live` (see plantLiveRows), the CF and Generation rows the EIA-923
+ * sidecar. Zone (NYISO) or BA stands where Yes shows the zone; State
+ * only shows when neither is known.
  * @param {object} record
- * @param {{period:string, hours:number}|null} [cfMeta]
+ * @param {{cfMeta?:{period:string, hours:number}|null, live?:object|null}} [ctx]
  * @returns {Array<[string, string]>}
  */
-export function plantCardRows(record, cfMeta = null) {
+export function plantCardRows(record, { cfMeta = null, live = null } = {}) {
   const cf = capacityFactor(record, cfMeta);
   // One technology per row (a blank label continues the Tech row) so a
   // multi-technology plant does not stretch the card.
   const techs = techText(record).split(' · ');
+  const area = record?.zone
+    ? ['Zone', record.zone]
+    : record?.ba
+      ? ['BA', record.ba]
+      : ['State', record?.state || ''];
   return [
     ['Capacity', mwText(record?.total_mw)],
+    ...plantLiveRows(record, live),
     ['Fuel', record?.prim_source || record?.fuel || ''],
     ...techs.map((tech, i) => [i === 0 ? 'Tech' : '', tech]),
     ['CF', cf ? `${cf.pct} · ${cf.period}` : ''],
     ['Generation', cf ? cf.energy : ''],
+    area,
     ['Utility', record?.utility || ''],
-    ['State', record?.state || ''],
     ['EIA id', record?.plant_code ? String(record.plant_code) : ''],
   ].filter(([, value]) => value);
 }
 
 /**
  * Card copy for one plant. The first detail line is what the ambient card
- * shows (fuel, MW, utility); `rows` is the table the hover card draws.
+ * shows (fuel, MW, the NRC output when the plant has one, utility);
+ * `rows` is the table the hover card draws.
  * @param {object} record
- * @param {{period:string, hours:number}|null} [cfMeta]
+ * @param {{cfMeta?:object|null, live?:object|null}} [ctx]
  * @returns {{title:string, details:string[], rows:Array<[string, string]>}}
  */
-export function plantCardCopy(record, cfMeta = null) {
+export function plantCardCopy(record, ctx = {}) {
   const title = record?.name || 'Power plant';
+  const output = reactorOutput(record, ctx?.live);
   const summary = [
     record?.prim_source || record?.fuel,
     mwText(record?.total_mw),
+    output ? `${output.pct}%` : null,
     record?.utility,
   ]
     .filter(Boolean)
@@ -283,17 +522,18 @@ export function plantCardCopy(record, cfMeta = null) {
   return {
     title,
     details: [summary, tech].filter(Boolean),
-    rows: plantCardRows(record, cfMeta),
+    rows: plantCardRows(record, ctx),
   };
 }
 
 /**
  * Ambient card (same shape the shared local-infrastructure engine publishes).
  * @param {object} record Record with `position`.
+ * @param {{live?:object|null}} [ctx] Live data for the NRC output figure.
  * @returns {object}
  */
-export function createPlantOverlayEntry(record) {
-  const { title, details } = plantCardCopy(record);
+export function createPlantOverlayEntry(record, ctx = {}) {
+  const { title, details } = plantCardCopy(record, ctx);
   return {
     id: record.id,
     source: PLANT_OVERLAY_SOURCE_ID,
@@ -327,14 +567,14 @@ export function createPlantOverlayEntry(record) {
  * Hover (card) or pinned (selected) detail entry: the title over the
  * label and value table.
  * @param {object} record Record with `position`.
- * @param {{pinned?:boolean, cfMeta?:object|null}} [options]
+ * @param {{pinned?:boolean, cfMeta?:object|null, live?:object|null}} [options]
  * @returns {object}
  */
 export function createPlantDetailEntry(
   record,
-  { pinned = false, cfMeta = null } = {},
+  { pinned = false, cfMeta = null, live = null } = {},
 ) {
-  const { title, rows } = plantCardCopy(record, cfMeta);
+  const { title, rows } = plantCardCopy(record, { cfMeta, live });
   return createHoverCardEntry({
     id: record.id,
     position: record.position,
@@ -367,7 +607,7 @@ export function plantLegend(records) {
       count: counts[key],
       blurb: [
         POWER_PLANT_FUEL_BLURBS[key],
-        'EIA primary energy source; dot size follows nameplate MW',
+        'EIA primary energy source; marker size follows nameplate MW',
       ]
         .filter(Boolean)
         .join(' · '),
@@ -376,6 +616,13 @@ export function plantLegend(records) {
 
 export function createPowerPlantsLayer({
   overlayHost = DEFAULT_OVERLAY_HOST,
+  sprites = createPlantMarkerSpriteCache(),
+  focus = requestWorldFocus,
+  fetchJson = (url) =>
+    fetch(url).then((r) => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    }),
   fetchText = (url) =>
     fetch(url).then((r) => {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -383,8 +630,8 @@ export function createPowerPlantsLayer({
     }),
 } = {}) {
   let _viewer = null;
-  let _points = null;
-  /** @type {object[]} Records with `position` and `point`. */
+  let _markers = null;
+  /** @type {object[]} Records with `position` and `marker`. */
   let _records = [];
   /** @type {Map<string, object>} */
   let _byId = new Map();
@@ -407,6 +654,15 @@ export function createPowerPlantsLayer({
   let _rowControlsListener = null;
   /** @type {{period:string, hours:number}|null} EIA-923 sidecar metadata. */
   let _cfMeta = null;
+  /** Live feeds for the card rows; `null` until the first poll lands. */
+  let _live = null;
+  /** @type {Map<string, object[]>} Plant code -> NRC units (sidecar). */
+  let _reactorUnits = new Map();
+  /** @type {Map<string, number>} `'BA|fuel'` -> nameplate MW (bundle). */
+  let _nameplate = new Map();
+  /** @type {object[]} Nuclear records with NRC units (label refresh). */
+  let _nuclearRecords = [];
+  let _liveAt = null;
 
   /** Ambient cards minus the one the detail card already covers. */
   function publishCohort() {
@@ -433,28 +689,41 @@ export function createPowerPlantsLayer({
     isPickId: isPlantPickId,
     resolve: pickedRecord,
     entryFor: (record, { pinned }) =>
-      createPlantDetailEntry(record, { pinned, cfMeta: _cfMeta }),
+      createPlantDetailEntry(record, { pinned, cfMeta: _cfMeta, live: _live }),
     onChange: (record) => {
       const id = record?.id || null;
       if (id === _cardId) return;
       _cardId = id;
       if (_enabled) publishCohort();
     },
+    // Double-click: pin the card and fly to the plant.
+    onActivate: (record) =>
+      focus({
+        kind: 'plant',
+        id: record.id,
+        label: record.name || 'Power plant',
+        position: record.position,
+      }),
     overlayHost,
   });
 
+  const optional = (url, what) =>
+    fetchText(url).catch((err) => {
+      console.warn(
+        `[Data:Power Plants] ${what} unavailable:`,
+        err?.message || err,
+      );
+      return '';
+    });
+
   async function load(generation) {
-    const [text, cfText] = await Promise.all([
+    const [text, cfText, reactorText, nodesText] = await Promise.all([
       fetchText(plantsUrl),
-      fetchText(capacityFactorsUrl).catch((err) => {
-        console.warn(
-          '[Data:Power Plants] capacity factors unavailable:',
-          err?.message || err,
-        );
-        return '';
-      }),
+      optional(capacityFactorsUrl, 'capacity factors'),
+      optional(reactorUnitsUrl, 'reactor units'),
+      optional(nyisoNodesUrl, 'NYISO nodes'),
     ]);
-    if (generation !== _generation || !_points) return;
+    if (generation !== _generation || !_markers) return;
     const parsed = parsePlantRecords(text);
     const cf = parseCapacityFactors(cfText);
     if (cf) {
@@ -468,29 +737,53 @@ export function createPowerPlantsLayer({
       if (i > 0 && i % PARSE_CHUNK === 0) {
         // Yield so a 13K-row bundle never blocks one long task.
         await new Promise((resolve) => setTimeout(resolve, 0));
-        if (generation !== _generation || !_points) return;
+        if (generation !== _generation || !_markers) return;
       }
       const record = parsed[i];
       record.position = Cesium.Cartesian3.fromDegrees(record.lon, record.lat);
       const style = powerPlantStyle(record);
-      record.point = _points.add({
+      const fuel = POWER_PLANT_FUEL_COLORS[record.fuel] ? record.fuel : 'other';
+      record.marker = _markers.add({
         id: record,
         position: record.position,
-        pixelSize: style.pixelSize,
-        color: Cesium.Color.fromCssColorString(style.color),
-        outlineColor: Cesium.Color.BLACK,
-        outlineWidth: 2,
+        width: style.markerPx,
+        height: style.markerPx,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
       });
+      // One atlas texture per fuel: setImage keys by id, `image:` would
+      // give every canvas its own entry.
+      const sprite = sprites.get(
+        fuel,
+        style.color,
+        POWER_PLANT_FUEL_ICONS[fuel],
+      );
+      if (sprite) record.marker.setImage(`plant-fuel:${fuel}`, sprite);
       record.entry = createPlantOverlayEntry(record);
       _records.push(record);
       _byId.set(record.id, record);
     }
+    _reactorUnits = parseReactorUnits(reactorText);
+    _nuclearRecords = _records.filter((r) =>
+      _reactorUnits.has(String(r.plant_code)),
+    );
+    _nameplate = fleetNameplateByBaFuel(_records);
+    joinNyisoNodes(_records, parseNyisoNodes(nodesText));
+    if (_live) refreshLive();
     _legend = plantLegend(_records);
     _lastUpdate = Date.now();
     _error = null;
     _cohortDirty = true;
     _rowControlsListener?.();
+    _viewer?.scene?.requestRender?.();
+  }
+
+  /** Re-derive everything that reads `_live`: nuclear labels, the open card. */
+  function refreshLive() {
+    for (const record of _nuclearRecords)
+      record.entry = createPlantOverlayEntry(record, { live: _live });
+    hover.sync((id) => _byId.get(id) || null);
+    _cohortDirty = true;
+    _lastWalk = 0;
     _viewer?.scene?.requestRender?.();
   }
 
@@ -540,7 +833,7 @@ export function createPowerPlantsLayer({
     const visible = [];
     for (const record of _records) {
       const show = occluder.isPointVisible(record.position);
-      if (record.point.show !== show) record.point.show = show;
+      if (record.marker.show !== show) record.marker.show = show;
       if (show && _cohortDirty) visible.push(record);
     }
     if (!_cohortDirty) return;
@@ -564,17 +857,15 @@ export function createPowerPlantsLayer({
     id: POWER_PLANTS_LAYER_ID,
     name: 'Power Plants',
     icon: '⚡',
-    source: 'EIA-860',
-    updateInterval: 0,
+    source: 'EIA-860 · live rows 5 min',
+    updateInterval: 300000,
     statsRefreshInterval: 1000,
 
     init(viewer) {
       _viewer = viewer;
-      _points = new Cesium.PointPrimitiveCollection({
-        blendOption: Cesium.BlendOption.OPAQUE,
-      });
-      _points.show = false;
-      viewer.scene.primitives.add(_points);
+      _markers = new Cesium.BillboardCollection();
+      _markers.show = false;
+      viewer.scene.primitives.add(_markers);
       overlayHost.setVisible(PLANT_OVERLAY_SOURCE_ID, false);
       hover.install(viewer);
       if (!_preRenderRemover)
@@ -590,7 +881,7 @@ export function createPowerPlantsLayer({
     enable(viewer) {
       if (viewer && !_viewer) this.init(viewer);
       _enabled = true;
-      if (_points) _points.show = true;
+      if (_markers) _markers.show = true;
       overlayHost.setVisible(PLANT_OVERLAY_SOURCE_ID, true);
       hover.setEnabled(true);
       _cohortDirty = true;
@@ -601,16 +892,53 @@ export function createPowerPlantsLayer({
 
     disable() {
       _enabled = false;
-      if (_points) _points.show = false;
+      if (_markers) _markers.show = false;
       hover.setEnabled(false);
       overlayHost.clearSource(PLANT_OVERLAY_SOURCE_ID);
       overlayHost.setVisible(PLANT_OVERLAY_SOURCE_ID, false);
       _viewer?.scene?.requestRender?.();
     },
 
-    // Static bundle: nothing to poll. Returning false would tell the manager
-    // the enable was rejected.
-    update() {
+    /**
+     * Poll the live feeds behind the card rows. Every endpoint is
+     * proxy-cached, so this adds no upstream traffic. A failed feed keeps
+     * its last value; the enable is never rejected for it.
+     */
+    async update() {
+      if (!_enabled) return true;
+      const results = await Promise.allSettled([
+        fetchJson(`${GRID_API_URL}?iso=nyiso`),
+        fetchJson(`${GRID_API_URL}?iso=spp`),
+        fetchJson(REACTORS_API_URL),
+        fetchJson(`${LMP_API_URL}?iso=nyiso`),
+      ]);
+      if (!_enabled) return true;
+      const value = (i) =>
+        results[i].status === 'fulfilled' ? results[i].value : null;
+      const prev = _live || {};
+      const lmp = value(3);
+      _live = {
+        nyiso: value(0) || prev.nyiso || null,
+        spp: value(1) || prev.spp || null,
+        reactors: value(2)?.units ? value(2) : prev.reactors || null,
+        lmp: Array.isArray(lmp?.nodes)
+          ? {
+              interval: lmp.interval,
+              byPtid: new Map(lmp.nodes.map((n) => [String(n.ptid), n])),
+            }
+          : prev.lmp || null,
+        reactorUnits: _reactorUnits,
+        nameplate: _nameplate,
+      };
+      const failed = results.filter((r) => r.status === 'rejected');
+      if (failed.length) {
+        console.warn(
+          '[Data:Power Plants] live feed failed:',
+          failed.map((r) => r.reason?.message || r.reason).join('; '),
+        );
+      }
+      _liveAt = Date.now();
+      refreshLive();
       return true;
     },
 
@@ -625,13 +953,13 @@ export function createPowerPlantsLayer({
       _preRenderRemover = null;
       _moveEndRemover = null;
       const target = viewer || _viewer;
-      if (_points) {
+      if (_markers) {
         try {
-          target?.scene?.primitives?.remove(_points);
+          target?.scene?.primitives?.remove(_markers);
         } catch {
           /* collection already gone */
         }
-        _points = null;
+        _markers = null;
       }
       _records = [];
       _cohort = [];
@@ -639,6 +967,11 @@ export function createPowerPlantsLayer({
       _byId = new Map();
       _legend = [];
       _cfMeta = null;
+      _live = null;
+      _liveAt = null;
+      _reactorUnits = new Map();
+      _nameplate = new Map();
+      _nuclearRecords = [];
       _lastUpdate = null;
       _error = null;
       _viewer = null;
@@ -658,7 +991,11 @@ export function createPowerPlantsLayer({
     },
 
     getStats() {
-      return { count: _records.length, lastUpdate: _lastUpdate, error: _error };
+      return {
+        count: _records.length,
+        lastUpdate: _liveAt || _lastUpdate,
+        error: _error,
+      };
     },
   };
 }

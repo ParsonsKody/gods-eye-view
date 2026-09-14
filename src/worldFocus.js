@@ -9,6 +9,10 @@ export const WORLD_CLICK_FOCUS_DURATION_SEC = 1.9;
 export const WORLD_FOCUS_FRAMING = Object.freeze({
   vessel: Object.freeze({ radiusM: 150, rangeM: 1200, pitchDeg: -30 }),
   fire: Object.freeze({ radiusM: 400, rangeM: 3000, pitchDeg: -35 }),
+  plant: Object.freeze({ radiusM: 500, rangeM: 3500, pitchDeg: -45 }),
+  // A line is framed by its own bounding sphere (`radiusM` on the request),
+  // standing off in proportion so the whole run fits the view.
+  line: Object.freeze({ radiusM: 0, rangeFactor: 2.4, minRangeM: 6000, pitchDeg: -60 }),
 });
 
 /** Validate a layer-owned focus target before camera policy can release tracking. */
@@ -62,18 +66,23 @@ export function flyToWorldTarget(viewer, target = {}) {
   const camera = viewer?.camera;
   const framing = WORLD_FOCUS_FRAMING[target.kind];
   if (!camera || !framing || !isValidWorldFocusTarget(target)) return false;
+  const radiusM = framing.radiusM || Number(target.radiusM) || 0;
+  if (!(radiusM > 0)) return false;
+  const rangeM = Number.isFinite(framing.rangeM)
+    ? framing.rangeM
+    : Math.max(framing.minRangeM || 0, radiusM * framing.rangeFactor);
   const heading = Number.isFinite(camera.heading) ? camera.heading : 0;
   const duration = target.durationSec > 0
     ? target.durationSec
     : WORLD_CLICK_FOCUS_DURATION_SEC;
   camera.cancelFlight?.();
   camera.flyToBoundingSphere(
-    new Cesium.BoundingSphere(target.position, framing.radiusM),
+    new Cesium.BoundingSphere(target.position, radiusM),
     {
       offset: new Cesium.HeadingPitchRange(
         heading,
         Cesium.Math.toRadians(framing.pitchDeg),
-        framing.rangeM,
+        rangeM,
       ),
       duration,
       easingFunction: Cesium.EasingFunction.CUBIC_IN_OUT,

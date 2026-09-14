@@ -1,4 +1,5 @@
 import test from 'node:test';
+import * as Cesium from 'cesium';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
@@ -9,8 +10,11 @@ import {
   createLineDetailEntry,
   lineCardCopy,
   lineParts,
+  lineBoundingSphere,
   lineStyleForFeature,
   isLinePickId,
+  outageLegend,
+  OUTAGE_COLOR,
   LINE_STYLE_BY_KV,
   DC_LINE_COLOR,
 } from './transmissionLines.js';
@@ -194,4 +198,73 @@ test('a line carrying a binding constraint says so on the card, in the congestio
   );
   assert.equal(constraintLegend({ matched: 3, total: 80 })[0].count, 3);
   assert.match(constraintLegend({ matched: 3, total: 80 })[0].blurb, /3 of 80/);
+});
+
+test('a line under a NYISO outage lists each circuit; a constrained line reads its neighbourhood', () => {
+  const outage = {
+    ptid: '25025',
+    name: 'BECK____-NIAGARA__230_PA27',
+    kind: 'line',
+    from: 'BECK',
+    to: 'NIAGARA',
+    kv: 230,
+    circuit: 'PA27',
+    since: '09/14/2026 08:49:00',
+  };
+  const record = {
+    id: 'line:9',
+    kv: 230,
+    sub_1: 'BECK',
+    sub_2: 'NIAGARA',
+    outages: [outage],
+    position: { x: 1, y: 2, z: 3 },
+  };
+  const { details } = lineCardCopy(record);
+  assert.equal(
+    details.at(-1),
+    'Outage: BECK-NIAGARA 230 PA27 · since 14 Sep 08:49 ET',
+  );
+  assert.equal(createLineDetailEntry(record).accent, OUTAGE_COLOR);
+  const constrained = {
+    ...record,
+    outages: undefined,
+    constraint: {
+      iso: 'nyiso',
+      name: 'NIAGARA 230 PACKARD 230 1',
+      shadowPrice: -40,
+    },
+    nearbyOutages: [{ ...outage, distanceKm: 0 }],
+    nuclearNearby: {
+      date: '14 Sep',
+      units: [{ unit: 'FitzPatrick', pct: 0, distanceKm: 12 }],
+    },
+  };
+  const copy = lineCardCopy(constrained);
+  assert.deepEqual(copy.details.slice(-2), [
+    'Outages nearby: 1 · BECK-NIAGARA 230 PA27 (since 14 Sep 08:49 ET)',
+    'Nuclear nearby: FitzPatrick 0% (NRC 14 Sep)',
+  ]);
+  assert.deepEqual(outageLegend({ matched: 0, total: 0 }), []);
+  assert.equal(outageLegend({ matched: 12, total: 80 })[0].count, 12);
+  assert.match(outageLegend({ matched: 12, total: 80 })[0].blurb, /12 of 80/);
+});
+
+test('a line frames as one sphere over every part, centred on the surface', () => {
+  const sphere = lineBoundingSphere([
+    [
+      [-79.03, 43.14],
+      [-78.9, 43.1],
+    ],
+    [
+      [-78.9, 43.1],
+      [-78.7, 43.0],
+    ],
+  ]);
+  assert.ok(
+    sphere.radius > 12000 && sphere.radius < 16000,
+    `radius ${sphere.radius}`,
+  );
+  const height = Cesium.Cartographic.fromCartesian(sphere.center).height;
+  assert.ok(Math.abs(height) < 1, `centre height ${height}`);
+  assert.equal(lineBoundingSphere([[[-79, 43]]]), null);
 });

@@ -17,7 +17,9 @@ import { registerPickOwner, unregisterPickOwner } from './pickRegistry.js';
  * The CCTV hover pattern: a leading-edge throttled scene.pick on MOUSE_MOVE,
  * nothing while the camera flies, a short linger before an unhovered card
  * is released, and a clean click that pins the card (a second click on it,
- * or a click on empty space, unpins). One overlay source per controller
+ * or a click on empty space, unpins). A double-click pins the card and
+ * hands the record to the layer's `onActivate` (fly the camera to it).
+ * One overlay source per controller
  * holds at most one entry, published in the protected `selected` lane when
  * pinned and the `ambient-card` lane while hovered.
  */
@@ -91,6 +93,8 @@ export function createHoverCardEntry({
  * @param {(record:object|null)=>void} [options.onChange] Called after every
  *   publish with the record now carrying the card (pinned over hovered), so
  *   a layer can drop its own ambient label for that record.
+ * @param {(record:object)=>void} [options.onActivate] Called with the
+ *   record under a double-click, after the card is pinned on it.
  * @param {object} [options.overlayHost]
  * @param {number} [options.pickThrottleMs]
  * @param {number} [options.releaseMs]
@@ -104,6 +108,7 @@ export function createHoverCardController({
   resolve,
   entryFor,
   onChange = null,
+  onActivate = null,
   overlayHost = DEFAULT_OVERLAY_HOST,
   pickThrottleMs = HOVER_PICK_THROTTLE_MS,
   releaseMs = HOVER_RELEASE_MS,
@@ -205,6 +210,17 @@ export function createHoverCardController({
     publish();
   }
 
+  function onDoubleClick(click) {
+    if (!_enabled || !_viewer || _viewer.isDestroyed()) return;
+    const record = pick(click?.position);
+    if (!record) return;
+    // The two single clicks of a double-click toggled the pin on and off;
+    // pin again so the card stays up through the flight.
+    _pinned = record;
+    publish();
+    onActivate?.(record);
+  }
+
   return {
     install(viewer) {
       if (_handler || !viewer?.scene?.canvas) return;
@@ -213,6 +229,10 @@ export function createHoverCardController({
       bindTrackingClickGesture(_handler, onClick, {
         onMouseMove: (event) => onMouseMove(event?.endPosition),
       });
+      _handler.setInputAction(
+        onDoubleClick,
+        Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK,
+      );
       _removeMoveStart = viewer.camera.moveStart.addEventListener(() => {
         _cameraMoving = true;
       });

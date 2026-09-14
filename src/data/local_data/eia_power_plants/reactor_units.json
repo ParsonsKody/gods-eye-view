@@ -1,0 +1,664 @@
+{
+ "source": "NRC power reactor status",
+ "pulled": "2026-09-14",
+ "units": [
+  {
+   "unit": "Arkansas Nuclear 1",
+   "plant_code": 8055,
+   "ba": "MISO",
+   "lon": -93.2351,
+   "lat": 35.311
+  },
+  {
+   "unit": "Arkansas Nuclear 2",
+   "plant_code": 8055,
+   "ba": "MISO",
+   "lon": -93.2351,
+   "lat": 35.311
+  },
+  {
+   "unit": "Beaver Valley 1",
+   "plant_code": 6040,
+   "ba": "PJM",
+   "lon": -80.4336,
+   "lat": 40.6219
+  },
+  {
+   "unit": "Beaver Valley 2",
+   "plant_code": 6040,
+   "ba": "PJM",
+   "lon": -80.4336,
+   "lat": 40.6219
+  },
+  {
+   "unit": "Braidwood 1",
+   "plant_code": 6022,
+   "ba": "PJM",
+   "lon": -88.2286,
+   "lat": 41.2435
+  },
+  {
+   "unit": "Braidwood 2",
+   "plant_code": 6022,
+   "ba": "PJM",
+   "lon": -88.2286,
+   "lat": 41.2435
+  },
+  {
+   "unit": "Browns Ferry 1",
+   "plant_code": 46,
+   "ba": "TVA",
+   "lon": -87.1189,
+   "lat": 34.7042
+  },
+  {
+   "unit": "Browns Ferry 2",
+   "plant_code": 46,
+   "ba": "TVA",
+   "lon": -87.1189,
+   "lat": 34.7042
+  },
+  {
+   "unit": "Browns Ferry 3",
+   "plant_code": 46,
+   "ba": "TVA",
+   "lon": -87.1189,
+   "lat": 34.7042
+  },
+  {
+   "unit": "Brunswick 1",
+   "plant_code": 6014,
+   "ba": "CPLE",
+   "lon": -78.0114,
+   "lat": 33.9597
+  },
+  {
+   "unit": "Brunswick 2",
+   "plant_code": 6014,
+   "ba": "CPLE",
+   "lon": -78.0114,
+   "lat": 33.9597
+  },
+  {
+   "unit": "Byron 1",
+   "plant_code": 6023,
+   "ba": "PJM",
+   "lon": -89.2819,
+   "lat": 42.0742
+  },
+  {
+   "unit": "Byron 2",
+   "plant_code": 6023,
+   "ba": "PJM",
+   "lon": -89.2819,
+   "lat": 42.0742
+  },
+  {
+   "unit": "Callaway",
+   "plant_code": 6153,
+   "ba": "MISO",
+   "lon": -91.77884,
+   "lat": 38.75892
+  },
+  {
+   "unit": "Calvert Cliffs 1",
+   "plant_code": 6011,
+   "ba": "PJM",
+   "lon": -76.4417,
+   "lat": 38.4344
+  },
+  {
+   "unit": "Calvert Cliffs 2",
+   "plant_code": 6011,
+   "ba": "PJM",
+   "lon": -76.4417,
+   "lat": 38.4344
+  },
+  {
+   "unit": "Catawba 1",
+   "plant_code": 6036,
+   "ba": "DUK",
+   "lon": -81.0694,
+   "lat": 35.0514
+  },
+  {
+   "unit": "Catawba 2",
+   "plant_code": 6036,
+   "ba": "DUK",
+   "lon": -81.0694,
+   "lat": 35.0514
+  },
+  {
+   "unit": "Clinton",
+   "plant_code": 204,
+   "ba": "MISO",
+   "lon": -88.8339,
+   "lat": 40.1719
+  },
+  {
+   "unit": "Columbia Generating Station",
+   "plant_code": 371,
+   "ba": "BPAT",
+   "lon": -119.3339,
+   "lat": 46.4711
+  },
+  {
+   "unit": "Comanche Peak 1",
+   "plant_code": 6145,
+   "ba": "ERCO",
+   "lon": -97.78552,
+   "lat": 32.29837
+  },
+  {
+   "unit": "Comanche Peak 2",
+   "plant_code": 6145,
+   "ba": "ERCO",
+   "lon": -97.78552,
+   "lat": 32.29837
+  },
+  {
+   "unit": "Cooper",
+   "plant_code": 8036,
+   "ba": "SWPP",
+   "lon": -95.6408,
+   "lat": 40.3628
+  },
+  {
+   "unit": "D.C. Cook 1",
+   "plant_code": 6000,
+   "ba": "PJM",
+   "lon": -86.56521,
+   "lat": 41.9756
+  },
+  {
+   "unit": "D.C. Cook 2",
+   "plant_code": 6000,
+   "ba": "PJM",
+   "lon": -86.56521,
+   "lat": 41.9756
+  },
+  {
+   "unit": "Davis-Besse",
+   "plant_code": 6149,
+   "ba": "PJM",
+   "lon": -83.0861,
+   "lat": 41.5967
+  },
+  {
+   "unit": "Diablo Canyon 1",
+   "plant_code": 6099,
+   "ba": "CISO",
+   "lon": -120.85554,
+   "lat": 35.21154
+  },
+  {
+   "unit": "Diablo Canyon 2",
+   "plant_code": 6099,
+   "ba": "CISO",
+   "lon": -120.85554,
+   "lat": 35.21154
+  },
+  {
+   "unit": "Dresden 2",
+   "plant_code": 869,
+   "ba": "PJM",
+   "lon": -88.27,
+   "lat": 41.39
+  },
+  {
+   "unit": "Dresden 3",
+   "plant_code": 869,
+   "ba": "PJM",
+   "lon": -88.27,
+   "lat": 41.39
+  },
+  {
+   "unit": "Farley 1",
+   "plant_code": 6001,
+   "ba": "SOCO",
+   "lon": -85.1116,
+   "lat": 31.2231
+  },
+  {
+   "unit": "Farley 2",
+   "plant_code": 6001,
+   "ba": "SOCO",
+   "lon": -85.1116,
+   "lat": 31.2231
+  },
+  {
+   "unit": "Fermi 2",
+   "plant_code": 1729,
+   "ba": "MISO",
+   "lon": -83.2581,
+   "lat": 41.9631
+  },
+  {
+   "unit": "FitzPatrick",
+   "plant_code": 6110,
+   "ba": "NYIS",
+   "lon": -76.40839,
+   "lat": 43.52139
+  },
+  {
+   "unit": "Ginna",
+   "plant_code": 6122,
+   "ba": "NYIS",
+   "lon": -77.3099,
+   "lat": 43.2777
+  },
+  {
+   "unit": "Grand Gulf 1",
+   "plant_code": 6072,
+   "ba": "MISO",
+   "lon": -91.0478,
+   "lat": 32.0081
+  },
+  {
+   "unit": "Harris 1",
+   "plant_code": 6015,
+   "ba": "CPLE",
+   "lon": -78.9556,
+   "lat": 35.6334
+  },
+  {
+   "unit": "Hatch 1",
+   "plant_code": 6051,
+   "ba": "SOCO",
+   "lon": -82.3447,
+   "lat": 31.9342
+  },
+  {
+   "unit": "Hatch 2",
+   "plant_code": 6051,
+   "ba": "SOCO",
+   "lon": -82.3447,
+   "lat": 31.9342
+  },
+  {
+   "unit": "Hope Creek 1",
+   "plant_code": 6118,
+   "ba": "PJM",
+   "lon": -75.5377,
+   "lat": 39.4666
+  },
+  {
+   "unit": "LaSalle 1",
+   "plant_code": 6026,
+   "ba": "PJM",
+   "lon": -88.66907,
+   "lat": 41.2455
+  },
+  {
+   "unit": "LaSalle 2",
+   "plant_code": 6026,
+   "ba": "PJM",
+   "lon": -88.66907,
+   "lat": 41.2455
+  },
+  {
+   "unit": "Limerick 1",
+   "plant_code": 6105,
+   "ba": "PJM",
+   "lon": -75.58744,
+   "lat": 40.2243
+  },
+  {
+   "unit": "Limerick 2",
+   "plant_code": 6105,
+   "ba": "PJM",
+   "lon": -75.58744,
+   "lat": 40.2243
+  },
+  {
+   "unit": "McGuire 1",
+   "plant_code": 6038,
+   "ba": "DUK",
+   "lon": -80.9486,
+   "lat": 35.4331
+  },
+  {
+   "unit": "McGuire 2",
+   "plant_code": 6038,
+   "ba": "DUK",
+   "lon": -80.9486,
+   "lat": 35.4331
+  },
+  {
+   "unit": "Millstone 2",
+   "plant_code": 566,
+   "ba": "ISNE",
+   "lon": -72.1677,
+   "lat": 41.3107
+  },
+  {
+   "unit": "Millstone 3",
+   "plant_code": 566,
+   "ba": "ISNE",
+   "lon": -72.1677,
+   "lat": 41.3107
+  },
+  {
+   "unit": "Monticello",
+   "plant_code": 1922,
+   "ba": "MISO",
+   "lon": -93.8493,
+   "lat": 45.3338
+  },
+  {
+   "unit": "Nine Mile Point 1",
+   "plant_code": 2589,
+   "ba": "NYIS",
+   "lon": -76.41,
+   "lat": 43.5211
+  },
+  {
+   "unit": "Nine Mile Point 2",
+   "plant_code": 2589,
+   "ba": "NYIS",
+   "lon": -76.41,
+   "lat": 43.5211
+  },
+  {
+   "unit": "North Anna 1",
+   "plant_code": 6168,
+   "ba": "PJM",
+   "lon": -77.7897,
+   "lat": 38.06
+  },
+  {
+   "unit": "North Anna 2",
+   "plant_code": 6168,
+   "ba": "PJM",
+   "lon": -77.7897,
+   "lat": 38.06
+  },
+  {
+   "unit": "Oconee 1",
+   "plant_code": 3265,
+   "ba": "DUK",
+   "lon": -82.8986,
+   "lat": 34.7939
+  },
+  {
+   "unit": "Oconee 2",
+   "plant_code": 3265,
+   "ba": "DUK",
+   "lon": -82.8986,
+   "lat": 34.7939
+  },
+  {
+   "unit": "Oconee 3",
+   "plant_code": 3265,
+   "ba": "DUK",
+   "lon": -82.8986,
+   "lat": 34.7939
+  },
+  {
+   "unit": "Palo Verde 1",
+   "plant_code": 6008,
+   "ba": "SRP",
+   "lon": -112.8617,
+   "lat": 33.3881
+  },
+  {
+   "unit": "Palo Verde 2",
+   "plant_code": 6008,
+   "ba": "SRP",
+   "lon": -112.8617,
+   "lat": 33.3881
+  },
+  {
+   "unit": "Palo Verde 3",
+   "plant_code": 6008,
+   "ba": "SRP",
+   "lon": -112.8617,
+   "lat": 33.3881
+  },
+  {
+   "unit": "Peach Bottom 2",
+   "plant_code": 3166,
+   "ba": "PJM",
+   "lon": -76.26874,
+   "lat": 39.75894
+  },
+  {
+   "unit": "Peach Bottom 3",
+   "plant_code": 3166,
+   "ba": "PJM",
+   "lon": -76.26874,
+   "lat": 39.75894
+  },
+  {
+   "unit": "Perry 1",
+   "plant_code": 6020,
+   "ba": "PJM",
+   "lon": -81.1439,
+   "lat": 41.8006
+  },
+  {
+   "unit": "Point Beach 1",
+   "plant_code": 4046,
+   "ba": "MISO",
+   "lon": -87.5369,
+   "lat": 44.2806
+  },
+  {
+   "unit": "Point Beach 2",
+   "plant_code": 4046,
+   "ba": "MISO",
+   "lon": -87.5369,
+   "lat": 44.2806
+  },
+  {
+   "unit": "Prairie Island 1",
+   "plant_code": 1925,
+   "ba": "MISO",
+   "lon": -92.6333,
+   "lat": 44.622
+  },
+  {
+   "unit": "Prairie Island 2",
+   "plant_code": 1925,
+   "ba": "MISO",
+   "lon": -92.6333,
+   "lat": 44.622
+  },
+  {
+   "unit": "Quad Cities 1",
+   "plant_code": 880,
+   "ba": "PJM",
+   "lon": -90.31028,
+   "lat": 41.72611
+  },
+  {
+   "unit": "Quad Cities 2",
+   "plant_code": 880,
+   "ba": "PJM",
+   "lon": -90.31028,
+   "lat": 41.72611
+  },
+  {
+   "unit": "River Bend Station 1",
+   "plant_code": 6462,
+   "ba": "MISO",
+   "lon": -91.3327,
+   "lat": 30.757
+  },
+  {
+   "unit": "Robinson 2",
+   "plant_code": 3251,
+   "ba": "CPLE",
+   "lon": -80.1589,
+   "lat": 34.4017
+  },
+  {
+   "unit": "Saint Lucie 1",
+   "plant_code": 6045,
+   "ba": "FPL",
+   "lon": -80.24639,
+   "lat": 27.34861
+  },
+  {
+   "unit": "Saint Lucie 2",
+   "plant_code": 6045,
+   "ba": "FPL",
+   "lon": -80.24639,
+   "lat": 27.34861
+  },
+  {
+   "unit": "Salem 1",
+   "plant_code": 2410,
+   "ba": "PJM",
+   "lon": -75.5358,
+   "lat": 39.4625
+  },
+  {
+   "unit": "Salem 2",
+   "plant_code": 2410,
+   "ba": "PJM",
+   "lon": -75.5358,
+   "lat": 39.4625
+  },
+  {
+   "unit": "Seabrook 1",
+   "plant_code": 6115,
+   "ba": "ISNE",
+   "lon": -70.84889,
+   "lat": 42.89917
+  },
+  {
+   "unit": "Sequoyah 1",
+   "plant_code": 6152,
+   "ba": "TVA",
+   "lon": -85.0917,
+   "lat": 35.2267
+  },
+  {
+   "unit": "Sequoyah 2",
+   "plant_code": 6152,
+   "ba": "TVA",
+   "lon": -85.0917,
+   "lat": 35.2267
+  },
+  {
+   "unit": "South Texas 1",
+   "plant_code": 6251,
+   "ba": "ERCO",
+   "lon": -96.0481,
+   "lat": 28.795
+  },
+  {
+   "unit": "South Texas 2",
+   "plant_code": 6251,
+   "ba": "ERCO",
+   "lon": -96.0481,
+   "lat": 28.795
+  },
+  {
+   "unit": "Summer",
+   "plant_code": 6127,
+   "ba": "SCEG",
+   "lon": -81.3153,
+   "lat": 34.2983
+  },
+  {
+   "unit": "Surry 1",
+   "plant_code": 3806,
+   "ba": "PJM",
+   "lon": -76.6986,
+   "lat": 37.1661
+  },
+  {
+   "unit": "Surry 2",
+   "plant_code": 3806,
+   "ba": "PJM",
+   "lon": -76.6986,
+   "lat": 37.1661
+  },
+  {
+   "unit": "Susquehanna 1",
+   "plant_code": 6103,
+   "ba": "PJM",
+   "lon": -76.1462,
+   "lat": 41.0919
+  },
+  {
+   "unit": "Susquehanna 2",
+   "plant_code": 6103,
+   "ba": "PJM",
+   "lon": -76.1462,
+   "lat": 41.0919
+  },
+  {
+   "unit": "Turkey Point 3",
+   "plant_code": 621,
+   "ba": "FPL",
+   "lon": -80.3308,
+   "lat": 25.4356
+  },
+  {
+   "unit": "Turkey Point 4",
+   "plant_code": 621,
+   "ba": "FPL",
+   "lon": -80.3308,
+   "lat": 25.4356
+  },
+  {
+   "unit": "Vogtle 1",
+   "plant_code": 649,
+   "ba": "SOCO",
+   "lon": -81.7625,
+   "lat": 33.1427
+  },
+  {
+   "unit": "Vogtle 2",
+   "plant_code": 649,
+   "ba": "SOCO",
+   "lon": -81.7625,
+   "lat": 33.1427
+  },
+  {
+   "unit": "Vogtle 3",
+   "plant_code": 649,
+   "ba": "SOCO",
+   "lon": -81.7625,
+   "lat": 33.1427
+  },
+  {
+   "unit": "Vogtle 4",
+   "plant_code": 649,
+   "ba": "SOCO",
+   "lon": -81.7625,
+   "lat": 33.1427
+  },
+  {
+   "unit": "Waterford 3",
+   "plant_code": 4270,
+   "ba": "MISO",
+   "lon": -90.47158,
+   "lat": 29.99527
+  },
+  {
+   "unit": "Watts Bar 1",
+   "plant_code": 7722,
+   "ba": "TVA",
+   "lon": -84.7895,
+   "lat": 35.6021
+  },
+  {
+   "unit": "Watts Bar 2",
+   "plant_code": 7722,
+   "ba": "TVA",
+   "lon": -84.7895,
+   "lat": 35.6021
+  },
+  {
+   "unit": "Wolf Creek 1",
+   "plant_code": 210,
+   "ba": "SWPP",
+   "lon": -95.68978,
+   "lat": 38.23926
+  }
+ ]
+}

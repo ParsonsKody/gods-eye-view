@@ -11,6 +11,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ui = fs.readFileSync(path.join(ROOT, 'src', 'ui', 'applicationShell.js'), 'utf8');
 const firms = fs.readFileSync(path.join(ROOT, 'src', 'data', 'firmsHeatmap.js'), 'utf8');
 const vessels = fs.readFileSync(path.join(ROOT, 'src', 'data', 'aisLiveVessels.js'), 'utf8');
+const plants = fs.readFileSync(path.join(ROOT, 'src', 'data', 'powerPlants.js'), 'utf8');
+const lines = fs.readFileSync(path.join(ROOT, 'src', 'data', 'transmissionLines.js'), 'utf8');
 const voice = fs.readFileSync(path.join(ROOT, 'src', 'voice', 'gevActions.js'), 'utf8');
 const cameraVerbs = fs.readFileSync(path.join(ROOT, 'src', 'cameraVerbs.js'), 'utf8');
 const cockpitTracking = fs.readFileSync(path.join(ROOT, 'src', 'cockpitTracking.js'), 'utf8');
@@ -405,4 +407,14 @@ test('vessel and fire layers announce valid clicks and never fly cameras', () =>
     'overlayHost.hitTest?.(',
     'selectAndFocusFire(carded)',
   ], 'fire sibling ownership');
+});
+
+test('plant and line double-clicks announce a focus request and never fly cameras', () => {
+  for (const source of [plants, lines]) {
+    assert.match(source, /onActivate: \(record\) =>/);
+    assert.doesNotMatch(source, /camera\.flyTo/);
+  }
+  assert.match(plants, /kind: 'plant',/);
+  assert.match(lines, /kind: 'line',/);
+  assert.match(lines, /radiusM: sphere\.radius,/);
 });

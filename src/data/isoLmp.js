@@ -1,4 +1,5 @@
 import * as Cesium from 'cesium';
+import { gridChips } from './gridFeeds.js';
 import {
   createHoverCardController,
   createHoverCardEntry,
@@ -31,6 +32,12 @@ import {
 
 const API_URL = '/api/lmp';
 const ISOS = ['nyiso', 'spp'];
+const reactorUnitsUrl = new URL(
+  './local_data/eia_power_plants/reactor_units.json',
+  import.meta.url,
+).href;
+const GRID_API_URL = '/api/grid';
+const REACTORS_API_URL = '/api/reactors';
 const nyisoNodesUrl = new URL(
   './local_data/iso_nodes/nyiso.geojsonl',
   import.meta.url,
@@ -203,6 +210,11 @@ export function createIsoLmpLayer({ overlayHost = DEFAULT_OVERLAY_HOST } = {}) {
   let _intervals = {};
   let _stale = false;
   let _legend = [];
+  /** Grid-condition chips (load, wind, nuclear, outages, binding) per ISO. */
+  let _chips = [];
+  /** @type {object[]|null} Reactor sidecar rows (unit, plant_code, ba). */
+  let _reactorUnits = null;
+  let _reactorUnitsPromise = null;
   let _enabled = false;
   /** @type {Map<string, object>|null} */
   let _nyisoNodes = null;
@@ -352,6 +364,36 @@ export function createIsoLmpLayer({ overlayHost = DEFAULT_OVERLAY_HOST } = {}) {
           );
           return new Map();
         });
+        if (!_reactorUnits && !_reactorUnitsPromise) {
+          _reactorUnitsPromise = fetch(reactorUnitsUrl)
+            .then((r) =>
+              r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)),
+            )
+            .then((json) => {
+              _reactorUnits = Array.isArray(json?.units) ? json.units : [];
+            })
+            .catch((err) => {
+              console.warn(
+                '[Data:ISO LMP] reactor units unavailable:',
+                err?.message || err,
+              );
+              _reactorUnits = [];
+            });
+        }
+        const json = (url) =>
+          fetch(url).then((r) =>
+            r.ok
+              ? r.json()
+              : Promise.reject(new Error(`${url} HTTP ${r.status}`)),
+          );
+        // The grid feeds behind the chips ride along; a failure there only
+        // costs the chips, never the nodes.
+        const gridPromise = Promise.allSettled([
+          json(`${GRID_API_URL}?iso=nyiso`),
+          json(`${GRID_API_URL}?iso=spp`),
+          json(REACTORS_API_URL),
+          _reactorUnitsPromise,
+        ]);
         const results = await Promise.allSettled(
           ISOS.map(async (iso) => {
             const response = await fetch(`${API_URL}?iso=${iso}`);
@@ -420,6 +462,19 @@ export function createIsoLmpLayer({ overlayHost = DEFAULT_OVERLAY_HOST } = {}) {
         _intervals = intervals;
         _stale = stale;
         _legend = lmpLegend(points, constraints);
+        const [gridNy, gridSpp, reactors] = await gridPromise;
+        const value = (r) => (r.status === 'fulfilled' ? r.value : null);
+        const bindingCount = (prefix) =>
+          constraints.filter(
+            (c) => String(c.id).startsWith(prefix) && c.shadowPrice,
+          ).length;
+        _chips = gridChips({
+          nyiso: value(gridNy),
+          spp: value(gridSpp),
+          reactors: value(reactors)?.units ? value(reactors) : null,
+          reactorUnits: _reactorUnits || [],
+          binding: { nyiso: bindingCount('nyiso:'), spp: bindingCount('spp:') },
+        });
         _rowControlsListener?.();
         _viewer?.scene?.requestRender?.();
         console.log(
@@ -453,11 +508,12 @@ export function createIsoLmpLayer({ overlayHost = DEFAULT_OVERLAY_HOST } = {}) {
       _lastError = null;
       _intervals = {};
       _legend = [];
+      _chips = [];
       _viewer = null;
     },
 
     getRowControls() {
-      return { chips: [], legend: _legend };
+      return { chips: _chips, legend: _legend };
     },
 
     setRowControlsListener(listener) {

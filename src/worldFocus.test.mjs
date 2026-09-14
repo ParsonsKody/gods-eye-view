@@ -141,9 +141,16 @@ test('fires frame wider than vessels — a fire is read by its surroundings', ()
 
 test('every framing is a real oblique standoff, not a nadir or an inside-out sphere', () => {
   const kinds = Object.keys(WORLD_FOCUS_FRAMING);
-  assert.deepEqual(kinds.sort(), ['fire', 'vessel']);
+  assert.deepEqual(kinds.sort(), ['fire', 'line', 'plant', 'vessel']);
   for (const kind of kinds) {
     const framing = WORLD_FOCUS_FRAMING[kind];
+    if (kind === 'line') {
+      // Framed by the request's own sphere; the standoff is proportional.
+      assert.equal(framing.radiusM, 0);
+      assert.ok(framing.rangeFactor > 1 && framing.minRangeM > 0);
+      assert.ok(framing.pitchDeg < 0 && framing.pitchDeg > -80);
+      continue;
+    }
     // Looking DOWN at the target, but obliquely — a nadir drop reads as a map.
     assert.ok(framing.pitchDeg < 0, `${kind}: pitch must look down, got ${framing.pitchDeg}`);
     assert.ok(framing.pitchDeg > -80, `${kind}: pitch must stay oblique, got ${framing.pitchDeg}`);
@@ -158,6 +165,23 @@ test('every framing is a real oblique standoff, not a nadir or an inside-out sph
   // Exact shipped values — a silent retune must show up as a failing test.
   assert.deepEqual({ ...WORLD_FOCUS_FRAMING.vessel }, { radiusM: 150, rangeM: 1200, pitchDeg: -30 });
   assert.deepEqual({ ...WORLD_FOCUS_FRAMING.fire }, { radiusM: 400, rangeM: 3000, pitchDeg: -35 });
+  assert.deepEqual({ ...WORLD_FOCUS_FRAMING.plant }, { radiusM: 500, rangeM: 3500, pitchDeg: -45 });
+});
+
+test('plants frame like a site; lines frame their own sphere with a proportional standoff', () => {
+  const camera = stubCamera();
+  flyToWorldTarget({ camera }, { kind: 'plant', id: 'plant:1', position: POSITION });
+  assert.equal(camera.calls.flights[0].sphere.radius, 500);
+  assert.equal(camera.calls.flights[0].options.offset.range, 3500);
+  flyToWorldTarget({ camera }, { kind: 'line', id: 'line:1', position: POSITION, radiusM: 40000 });
+  assert.equal(camera.calls.flights[1].sphere.radius, 40000);
+  assert.equal(camera.calls.flights[1].options.offset.range, 96000);
+  // A short line still stands off far enough to read.
+  flyToWorldTarget({ camera }, { kind: 'line', id: 'line:2', position: POSITION, radiusM: 900 });
+  assert.equal(camera.calls.flights[2].options.offset.range, 6000);
+  // A line request without a radius is not flown.
+  assert.equal(flyToWorldTarget({ camera }, { kind: 'line', id: 'line:3', position: POSITION }), false);
+  assert.equal(camera.calls.flights.length, 3);
 });
 
 test('unknown kinds and missing viewers issue no flight', () => {

@@ -18,7 +18,8 @@ export const MCC_POSITIVE_COLOR = '#ff1744';
 export const MCC_SATURATION = 20;
 export const CONSTRAINT_COLOR = '#ffd600';
 
-function splitCsvLine(line) {
+/** Split one CSV line, honouring double quotes. */
+export function splitCsvLine(line) {
   const out = [];
   let cur = '';
   let quoted = false;
@@ -298,7 +299,8 @@ export function formatIntervalEt(iso, interval) {
   return `${hour}:${get('minute')} ET`;
 }
 
-function money(value, { signed = false, decimals = 2 } = {}) {
+/** `$45.11`, `-$3.20`, `+$12.40` with `signed`. */
+export function money(value, { signed = false, decimals = 2 } = {}) {
   const v = Number(value);
   if (!Number.isFinite(v)) return '?';
   const abs = Math.abs(v).toLocaleString('en-US', {

@@ -7,7 +7,7 @@ import {
   HOVER_RELEASE_MS,
 } from './hoverCard.js';
 
-function harness({ pickResult = () => null } = {}) {
+function harness({ pickResult = () => null, onActivate = null } = {}) {
   const calls = [];
   const actions = new Map();
   const overlayHost = {
@@ -34,6 +34,7 @@ function harness({ pickResult = () => null } = {}) {
         accent: '#fff',
         pinned,
       }),
+    onActivate,
     overlayHost,
     handlerFactory: () => ({
       setInputAction: (fn, type) => actions.set(type, fn),
@@ -53,6 +54,7 @@ function harness({ pickResult = () => null } = {}) {
       fire(T.LEFT_UP, { position: { x, y } });
       fire(T.LEFT_CLICK, { position: { x, y } });
     },
+    doubleClick: (x, y) => fire(T.LEFT_DOUBLE_CLICK, { position: { x, y } }),
     last: () => calls[calls.length - 1],
   };
 }
@@ -107,4 +109,27 @@ test('sync re-resolves records and drops vanished ones; disable clears', () => {
   assert.deepEqual(h.last(), ['clear', 'test-cards']);
   h.controller.setEnabled(false);
   assert.deepEqual(h.last(), ['visible', 'test-cards', false]);
+});
+
+test('a double-click pins the card and hands the record to onActivate', () => {
+  let picked = { id: RECORD };
+  const activated = [];
+  const h = harness({
+    pickResult: () => picked,
+    onActivate: (record) => activated.push(record),
+  });
+  h.controller.install(h.viewer);
+  h.controller.setEnabled(true);
+  // The two clicks of a double-click pin then unpin; the double-click pins.
+  h.click(5, 5);
+  h.click(5, 5);
+  assert.equal(h.controller.pinned(), null);
+  h.doubleClick(5, 5);
+  assert.equal(h.controller.pinned(), RECORD);
+  assert.equal(h.last()[2][0].variant, 'selected');
+  assert.deepEqual(activated, [RECORD]);
+  // Empty space activates nothing.
+  picked = null;
+  h.doubleClick(50, 50);
+  assert.equal(activated.length, 1);
 });

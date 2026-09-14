@@ -10,6 +10,16 @@ import {
 } from './telegeographySubmarineCables.js';
 import { matchConstraintsToLines } from './constraintLines.js';
 import { mccColor, MCC_POSITIVE_COLOR } from './lmpFeeds.js';
+import { requestWorldFocus } from '../worldFocus.js';
+import {
+  matchOutagesToLines,
+  nearbyOutages,
+  nuclearNearby,
+  outageCopy,
+  outageName,
+  sinceText,
+} from './outageLines.js';
+import { shortDate } from './gridFeeds.js';
 
 /**
  * US transmission lines from the EIA Atlas archive of the HIFLD dataset
@@ -64,6 +74,15 @@ export const LINE_DETAIL_SOURCE_ID = 'eia-transmission-lines-detail';
 /** |shadow price| in $/MWh at which the congested-line colour saturates. */
 export const CONSTRAINT_SATURATION = 200;
 const CONGESTED_EXTRA_WIDTH = 3;
+const OUTAGED_EXTRA_WIDTH = 2;
+/** Dashed colour of a line under a NYISO real-time outage. */
+export const OUTAGE_COLOR = '#90a4ae';
+const GRID_API_URL = '/api/grid';
+const REACTORS_API_URL = '/api/reactors';
+const reactorUnitsUrl = new URL(
+  './local_data/eia_power_plants/reactor_units.json',
+  import.meta.url,
+).href;
 /** HIFLD placeholders: "NOT AVAILABLE" and synthetic "UNKNOWN119979" nodes. */
 const NOT_AVAILABLE = /^(not available|unknown\d*)$/i;
 
@@ -150,6 +169,25 @@ export function lineCardCopy(record) {
   ].filter(Boolean);
   if (facts.length) details.push(facts.join(' · '));
   if (record?.constraint) details.push(constraintCopy(record.constraint));
+  for (const outage of record?.outages || []) details.push(outageCopy(outage));
+  // The neighbourhood of a constrained line: what else is out, what
+  // reactor is down. Filled by the layer from the live feeds.
+  if (record?.constraint) {
+    const near = record.nearbyOutages || [];
+    if (near.length) {
+      const named = near
+        .slice(0, 2)
+        .map((o) => `${outageName(o)} (since ${sinceText(o.since)})`)
+        .join(', ');
+      details.push(`Outages nearby: ${near.length} · ${named}`);
+    }
+    const nuke = record.nuclearNearby;
+    if (nuke?.units?.length) {
+      details.push(
+        `Nuclear nearby: ${nuke.units.map((u) => `${u.unit} ${u.pct}%`).join(', ')} (NRC ${nuke.date})`,
+      );
+    }
+  }
   return { title, details };
 }
 
@@ -168,7 +206,9 @@ export function createLineDetailEntry(record, { pinned = false } = {}) {
     details,
     accent: record.constraint
       ? constraintColor(record.constraint)
-      : lineStyleForFeature(record).color,
+      : record.outages?.length
+        ? OUTAGE_COLOR
+        : lineStyleForFeature(record).color,
     pinned,
   });
 }
@@ -224,6 +264,27 @@ export function lineParts(collection) {
 }
 
 /**
+ * Bounding sphere of one line (every part of the feature), centre lifted
+ * to the ellipsoid surface so a long run still validates as a world
+ * focus target.
+ * @param {number[][][]} partsPositions Lon/lat pairs per part.
+ * @returns {Cesium.BoundingSphere|null}
+ */
+export function lineBoundingSphere(partsPositions) {
+  const flat = [];
+  for (const positions of partsPositions || []) {
+    for (const pair of positions || []) flat.push(pair[0], pair[1]);
+  }
+  if (flat.length < 4) return null;
+  const sphere = Cesium.BoundingSphere.fromPoints(
+    Cesium.Cartesian3.fromDegreesArray(flat),
+  );
+  const surface = Cesium.Ellipsoid.WGS84.scaleToGeodeticSurface(sphere.center);
+  if (surface) sphere.center = surface;
+  return sphere;
+}
+
+/**
  * Legend row for the panel: how many constraints landed on a line.
  * @param {{matched:number,total:number}} stats
  * @returns {Array<{color:string,label:string,count:number,blurb:string}>}
@@ -242,6 +303,25 @@ export function constraintLegend(stats) {
 }
 
 /**
+ * Legend row for the panel: how many NYISO line outages landed on a line.
+ * @param {{matched:number,total:number}} stats
+ * @returns {Array<{color:string,label:string,count:number,blurb:string}>}
+ */
+export function outageLegend(stats) {
+  const matched = stats?.matched || 0;
+  const total = stats?.total || 0;
+  if (!total) return [];
+  return [
+    {
+      color: OUTAGE_COLOR,
+      label: 'lines out (dashed)',
+      count: matched,
+      blurb: `${matched} of ${total} NYISO real-time line outages placed on a bundled line (EMS and HIFLD station names agree only partly)`,
+    },
+  ];
+}
+
+/**
  * Build the transmission-lines layer module.
  * @param {object} [options]
  * @param {EventTarget|null} [options.mapStackEventTarget] Basemap switch source.
@@ -250,6 +330,7 @@ export function constraintLegend(stats) {
 export function createTransmissionLinesLayer({
   mapStackEventTarget = typeof window !== 'undefined' ? window : null,
   overlayHost = DEFAULT_OVERLAY_HOST,
+  focus = requestWorldFocus,
 } = {}) {
   let _viewer = null;
   let _enabled = false;
@@ -260,6 +341,18 @@ export function createTransmissionLinesLayer({
   let _regional = null;
   /** @type {{primitive:Cesium.GroundPolylinePrimitive}|null} Matched lines, redrawn wider. */
   let _congested = null;
+  /** @type {{primitive:Cesium.GroundPolylinePrimitive}|null} Lines under outage, dashed. */
+  let _outaged = null;
+  /** @type {object[]} Latest NYISO line outages from /api/grid. */
+  let _outages = [];
+  let _outageStats = { matched: 0, total: 0 };
+  /** @type {Set<object>} Records currently carrying `outages`. */
+  let _outagedRecords = new Set();
+  /** @type {{reportDate:string, units:object}|null} NRC payload. */
+  let _reactors = null;
+  /** @type {object[]|null} Reactor sidecar rows (unit, lon, lat). */
+  let _reactorUnits = null;
+  let _reactorUnitsPromise = null;
   let _loading = null;
   let _regionalLoading = null;
   /** Ownership token: destroy bumps it so in-flight loads discard themselves. */
@@ -273,9 +366,16 @@ export function createTransmissionLinesLayer({
   /** @type {Set<object>} Records currently carrying a `constraint`. */
   let _matchedRecords = new Set();
   let _rowControlsListener = null;
+  /** @type {Map<string, number[][][]>} Lon/lat parts per line id, both sets. */
+  const _partsById = new Map();
 
   function buildPrimitive(collection) {
     const { features, parts } = lineParts(collection);
+    for (const part of parts) {
+      const list = _partsById.get(part.record.id) || [];
+      list.push(part.positions);
+      _partsById.set(part.record.id, list);
+    }
     const colorCache = new Map();
     const instances = parts.map(({ positions, color, width, record }) => {
       let attr = colorCache.get(color);
@@ -311,7 +411,8 @@ export function createTransmissionLinesLayer({
     if (
       picked.primitive !== _backbone?.primitive &&
       picked.primitive !== _regional?.primitive &&
-      picked.primitive !== _congested?.primitive
+      picked.primitive !== _congested?.primitive &&
+      picked.primitive !== _outaged?.primitive
     )
       return null;
     const position = _viewer?.camera?.pickEllipsoid(windowPosition);
@@ -324,6 +425,18 @@ export function createTransmissionLinesLayer({
     isPickId: isLinePickId,
     resolve: pickedLine,
     entryFor: createLineDetailEntry,
+    // Double-click: frame the whole line.
+    onActivate: (record) => {
+      const sphere = lineBoundingSphere(_partsById.get(record.id));
+      if (!sphere) return;
+      focus({
+        kind: 'line',
+        id: record.id,
+        label: lineCardCopy(record).title,
+        position: sphere.center,
+        radiusM: sphere.radius,
+      });
+    },
     overlayHost,
   });
 
@@ -345,7 +458,7 @@ export function createTransmissionLinesLayer({
   function applyClassification(next) {
     if (next === undefined || next === _classification) return;
     _classification = next;
-    for (const set of [_backbone, _regional, _congested]) {
+    for (const set of [_backbone, _regional, _congested, _outaged]) {
       if (set) set.primitive.classificationType = next;
     }
     _viewer?.scene?.requestRender?.();
@@ -406,7 +519,11 @@ export function createTransmissionLinesLayer({
       _constraints,
       parts,
     );
-    for (const record of _matchedRecords) delete record.constraint;
+    for (const record of _matchedRecords) {
+      delete record.constraint;
+      delete record.nearbyOutages;
+      delete record.nuclearNearby;
+    }
     _matchedRecords = new Set();
     for (const [record, constraint] of byRecord) {
       record.constraint = constraint;
@@ -448,6 +565,66 @@ export function createTransmissionLinesLayer({
       scene.groundPrimitives.add(primitive);
       _congested = { primitive };
     }
+    // NYISO outages: dashed over the base set, one row per circuit on the
+    // card, and the neighbourhood rows on every constrained line.
+    const outageMatch = matchOutagesToLines(_outages, parts);
+    for (const record of _outagedRecords) delete record.outages;
+    _outagedRecords = new Set();
+    for (const [record, outages] of outageMatch.byRecord) {
+      record.outages = outages;
+      _outagedRecords.add(record);
+    }
+    _outageStats = { matched: outageMatch.matched, total: outageMatch.total };
+    for (const record of _matchedRecords) {
+      const own = _partsById.get(record.id) || [];
+      record.nearbyOutages = nearbyOutages(
+        record,
+        own,
+        outageMatch.byRecord,
+        _partsById,
+      );
+      const units =
+        _reactors && _reactorUnits
+          ? nuclearNearby(own, _reactorUnits, _reactors)
+          : [];
+      record.nuclearNearby = units.length
+        ? { date: shortDate(_reactors.reportDate), units }
+        : null;
+    }
+    removeSet(_outaged);
+    _outaged = null;
+    if (scene && outageMatch.byRecord.size) {
+      const instances = [];
+      for (const part of parts) {
+        if (!outageMatch.byRecord.has(part.record)) continue;
+        instances.push(
+          new Cesium.GeometryInstance({
+            id: part.record,
+            geometry: new Cesium.GroundPolylineGeometry({
+              positions: Cesium.Cartesian3.fromDegreesArray(
+                part.positions.flat(),
+              ),
+              width: part.width + OUTAGED_EXTRA_WIDTH,
+            }),
+          }),
+        );
+      }
+      const primitive = new Cesium.GroundPolylinePrimitive({
+        geometryInstances: instances,
+        appearance: new Cesium.PolylineMaterialAppearance({
+          material: Cesium.Material.fromType('PolylineDash', {
+            color: Cesium.Color.fromCssColorString(OUTAGE_COLOR),
+            gapColor: Cesium.Color.TRANSPARENT,
+            dashLength: 16,
+          }),
+        }),
+        classificationType: _classification,
+        allowPicking: true,
+      });
+      primitive.show = _enabled;
+      scene.groundPrimitives.add(primitive);
+      _outaged = { primitive };
+    }
     // A hovered or pinned card is a copy of its record; refresh it so the
     // constraint line appears or disappears with the feed.
     const byId = new Map(parts.map((part) => [part.record.id, part.record]));
@@ -467,7 +644,7 @@ export function createTransmissionLinesLayer({
     id: 'eia-transmission-lines',
     name: 'Transmission Lines',
     icon: '⌇',
-    source: 'EIA / HIFLD 2024 · constraints 5 min',
+    source: 'EIA / HIFLD 2024 · constraints and outages 5 min',
     updateInterval: 300000,
 
     init(viewer) {
@@ -524,6 +701,7 @@ export function createTransmissionLinesLayer({
       });
       if (_backbone) _backbone.primitive.show = _enabled;
       if (_congested) _congested.primitive.show = _enabled;
+      if (_outaged) _outaged.primitive.show = _enabled;
       updateRegionalVisibility();
       _viewer?.scene?.requestRender?.();
     },
@@ -534,15 +712,51 @@ export function createTransmissionLinesLayer({
       if (_backbone) _backbone.primitive.show = false;
       if (_regional) _regional.primitive.show = false;
       if (_congested) _congested.primitive.show = false;
+      if (_outaged) _outaged.primitive.show = false;
       _viewer?.scene?.requestRender?.();
     },
 
     /**
-     * Refresh the binding constraints (the line bundle itself is static).
-     * A feed failure keeps the last congested set; the enable is never
-     * rejected for it, so this always returns true.
+     * Refresh the binding constraints, the NYISO line outages and the NRC
+     * reactor status (the line bundle itself is static). A feed failure
+     * keeps the last set; the enable is never rejected for it, so this
+     * always returns true.
      */
     async update() {
+      if (!_reactorUnits && !_reactorUnitsPromise) {
+        _reactorUnitsPromise = fetch(reactorUnitsUrl)
+          .then((r) =>
+            r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)),
+          )
+          .then((json) => {
+            _reactorUnits = Array.isArray(json?.units) ? json.units : [];
+          })
+          .catch((err) => {
+            console.warn(
+              '[Data:Transmission] reactor units unavailable:',
+              err?.message || err,
+            );
+            _reactorUnits = [];
+          });
+      }
+      const [gridResult, reactorResult] = await Promise.allSettled([
+        fetch(`${GRID_API_URL}?iso=nyiso`).then((r) =>
+          r.ok ? r.json() : Promise.reject(new Error(`grid HTTP ${r.status}`)),
+        ),
+        fetch(REACTORS_API_URL).then((r) =>
+          r.ok
+            ? r.json()
+            : Promise.reject(new Error(`reactors HTTP ${r.status}`)),
+        ),
+        _reactorUnitsPromise,
+      ]);
+      if (
+        gridResult.status === 'fulfilled' &&
+        Array.isArray(gridResult.value?.lineOutages)
+      )
+        _outages = gridResult.value.lineOutages;
+      if (reactorResult.status === 'fulfilled' && reactorResult.value?.units)
+        _reactors = reactorResult.value;
       const results = await Promise.allSettled(
         CONSTRAINT_ISOS.map(async (iso) => {
           const response = await fetch(`${LMP_API_URL}?iso=${iso}`);
@@ -556,15 +770,17 @@ export function createTransmissionLinesLayer({
         }),
       );
       const fulfilled = results.filter((r) => r.status === 'fulfilled');
-      if (fulfilled.length) {
-        _constraints = fulfilled.flatMap((r) => r.value);
-        rematch();
-      } else {
+      if (fulfilled.length) _constraints = fulfilled.flatMap((r) => r.value);
+      const failed = [...results, gridResult, reactorResult].filter(
+        (r) => r.status === 'rejected',
+      );
+      if (failed.length) {
         console.warn(
-          '[Data:Transmission] constraint feed failed:',
-          results.map((r) => r.reason?.message || r.reason).join('; '),
+          '[Data:Transmission] live feed failed:',
+          failed.map((r) => r.reason?.message || r.reason).join('; '),
         );
       }
+      if (failed.length < results.length + 2) rematch();
       return true;
     },
 
@@ -575,9 +791,16 @@ export function createTransmissionLinesLayer({
       removeSet(_backbone);
       removeSet(_regional);
       removeSet(_congested);
+      removeSet(_outaged);
+      _partsById.clear();
       _backbone = null;
       _regional = null;
       _congested = null;
+      _outaged = null;
+      _outages = [];
+      _outageStats = { matched: 0, total: 0 };
+      _outagedRecords = new Set();
+      _reactors = null;
       _constraints = [];
       _matchStats = { matched: 0, total: 0 };
       _matchedRecords = new Set();
@@ -597,7 +820,13 @@ export function createTransmissionLinesLayer({
     },
 
     getRowControls() {
-      return { chips: [], legend: constraintLegend(_matchStats) };
+      return {
+        chips: [],
+        legend: [
+          ...constraintLegend(_matchStats),
+          ...outageLegend(_outageStats),
+        ],
+      };
     },
 
     setRowControlsListener(listener) {
