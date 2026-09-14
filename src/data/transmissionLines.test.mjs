@@ -28,12 +28,12 @@ test('line style picks the voltage band and lets DC override the colour', () => 
     color: LINE_STYLE_BY_KV[2][1],
     width: LINE_STYLE_BY_KV[2][2],
   });
-  assert.equal(lineStyleForFeature({ kv: 115 }).width, 1);
+  assert.equal(lineStyleForFeature({ kv: 115 }).width, 1.6);
   assert.equal(
     lineStyleForFeature({ kv: 500, type: 'DC; OVERHEAD' }).color,
     DC_LINE_COLOR,
   );
-  assert.equal(lineStyleForFeature(null).width, 1);
+  assert.equal(lineStyleForFeature(null).width, 1.6);
 });
 
 test('layer module exposes the data-layer contract without loading', (t) => {

@@ -11,6 +11,7 @@ import {
   parsePlantRecords,
   plantCardCopy,
   plantLegend,
+  plantShortName,
   plantLiveRows,
   parseReactorUnits,
   joinNyisoNodes,
@@ -159,9 +160,17 @@ test('card copy: ambient card keeps the summary, hover card is a label and value
     position: { x: 1, y: 2, z: 3 },
   };
   const ambient = createPlantOverlayEntry(record);
-  assert.equal(ambient.variant, 'card');
-  assert.equal(ambient.details.length, 1);
+  assert.equal(ambient.variant, 'label');
+  assert.equal(ambient.title, 'JAMESR');
+  assert.equal(ambient.details.length, 0);
+  assert.equal(ambient.placement, 'below');
   assert.equal(ambient.priority, 1038.75);
+  assert.equal(plantShortName('Wolf Creek Generating Station'), 'WOLFCR');
+  assert.equal(plantShortName('Jeffrey Energy Center'), 'JEFFRE');
+  assert.equal(plantShortName('Nine Mile Point'), 'NINEMI');
+  assert.equal(plantShortName('Caithness Long Island'), 'CAITHN');
+  assert.equal(plantShortName('Power Plant'), 'POWERP');
+  assert.equal(plantShortName(''), '');
   const pinned = createPlantDetailEntry(record, { pinned: true });
   assert.equal(pinned.variant, 'selected');
   assert.equal(pinned.accent, POWER_PLANT_FUEL_COLORS.gas);
@@ -221,7 +230,7 @@ test('capacity factor joins the EIA-923 sidecar by plant code onto the hover car
   );
   assert.equal(plantCardCopy(record, { cfMeta: meta }).details.length, 2);
   const drawn = { ...record, id: 'plant:2161', position: { x: 1, y: 2, z: 3 } };
-  assert.equal(createPlantOverlayEntry(drawn).details.length, 1);
+  assert.equal(createPlantOverlayEntry(drawn).details.length, 0);
   assert.equal(createPlantOverlayEntry(drawn).rows, undefined);
   assert.equal(createPlantDetailEntry(drawn, { cfMeta: meta }).rows.length, 8);
 });

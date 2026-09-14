@@ -62,11 +62,11 @@ export const REGIONAL_MAX_CAMERA_HEIGHT_M = 1800000;
 
 /** [minKv, colour, width px], first match wins. DC lines override colour. */
 export const LINE_STYLE_BY_KV = Object.freeze([
-  Object.freeze([765, '#e040fb', 3]),
-  Object.freeze([500, '#ff5252', 2.4]),
-  Object.freeze([345, '#ffb74d', 1.8]),
-  Object.freeze([230, '#4dd0e1', 1.4]),
-  Object.freeze([0, '#9e9e9e', 1]),
+  Object.freeze([765, '#e040fb', 4.5]),
+  Object.freeze([500, '#ff5252', 3.6]),
+  Object.freeze([345, '#ffb74d', 2.8]),
+  Object.freeze([230, '#4dd0e1', 2.2]),
+  Object.freeze([0, '#9e9e9e', 1.6]),
 ]);
 export const DC_LINE_COLOR = '#40c4ff';
 const LINE_ALPHA = 0.9;

@@ -23,7 +23,7 @@ import { fleetNameplateByBaFuel, fleetRow, shortDate } from './gridFeeds.js';
  * fuel glyph in the fuel colour (plantMarkerSprite.js), sized by nameplate
  * MW, with no stem: on this map lines mean transmission lines. All 13K
  * markers are always drawn (a cheap pre-render
- * occluder walk hides the far side of the globe); only the ambient cards
+ * occluder walk hides the far side of the globe); only the short-code labels
  * are budgeted, through the same grid cohort the other local layers use.
  * Hovering a marker shows the detail card (title plus a label and value
  * table), clicking pins it, double-clicking flies the camera to the
@@ -69,7 +69,7 @@ export const POWER_PLANTS_LAYER_ID = 'local-power-plants';
 export const PLANT_OVERLAY_SOURCE_ID = 'local-power-plants';
 export const PLANT_DETAIL_SOURCE_ID = 'local-power-plants-detail';
 export const PLANT_LABEL_MAX = 600;
-export const PLANT_LABEL_GRID_PX = 140;
+export const PLANT_LABEL_GRID_PX = 80;
 export const PLANT_LABEL_ACCENT = '#ffb300';
 const PARSE_CHUNK = 1500;
 /**
@@ -113,6 +113,22 @@ const NAME_STOP_WORDS = new Set([
   'ISLAND',
   'NEW',
   'YORK',
+]);
+/** Generic words the short marker code drops (the name's own words stay). */
+const SHORT_NAME_STOP_WORDS = new Set([
+  'POWER',
+  'PLANT',
+  'STATION',
+  'ENERGY',
+  'CENTER',
+  'GENERATING',
+  'GENERATION',
+  'PROJECT',
+  'FACILITY',
+  'UNIT',
+  'LLC',
+  'CORP',
+  'FARM',
 ]);
 const KM_PER_DEG_LAT = 110.57;
 const KM_PER_DEG_LON_EQ = 111.32;
@@ -495,9 +511,8 @@ export function plantCardRows(record, { cfMeta = null, live = null } = {}) {
 }
 
 /**
- * Card copy for one plant. The first detail line is what the ambient card
- * shows (fuel, MW, the NRC output when the plant has one, utility);
- * `rows` is the table the hover card draws.
+ * Card copy for one plant: the hover title, its summary line (fuel, MW,
+ * the NRC output when the plant has one, utility) and the row table.
  * @param {object} record
  * @param {{cfMeta?:object|null, live?:object|null}} [ctx]
  * @returns {{title:string, details:string[], rows:Array<[string, string]>}}
@@ -527,39 +542,47 @@ export function plantCardCopy(record, ctx = {}) {
 }
 
 /**
- * Ambient card (same shape the shared local-infrastructure engine publishes).
+ * Yes Energy style short code for the label under a marker: the name in
+ * upper case without the generic words, first six letters.
+ * @param {string} name
+ * @returns {string}
+ */
+export function plantShortName(name) {
+  const upper = String(name || '').toUpperCase();
+  const words = upper.split(/[^A-Z]+/).filter(Boolean);
+  const kept = words.filter((w) => !SHORT_NAME_STOP_WORDS.has(w));
+  return (kept.length ? kept : words).join('').slice(0, 6);
+}
+
+/**
+ * Ambient label: the short code under the marker. The full card is the
+ * hover entry.
  * @param {object} record Record with `position`.
- * @param {{live?:object|null}} [ctx] Live data for the NRC output figure.
  * @returns {object}
  */
-export function createPlantOverlayEntry(record, ctx = {}) {
-  const { title, details } = plantCardCopy(record, ctx);
+export function createPlantOverlayEntry(record) {
   return {
     id: record.id,
     source: PLANT_OVERLAY_SOURCE_ID,
     position: record.position,
-    variant: 'card',
-    title,
-    details: details.slice(0, 1),
+    variant: 'label',
+    title: plantShortName(record.name),
+    details: [],
     accent: PLANT_LABEL_ACCENT,
     priority: record.priority,
-    collisionGroup: 'ambient-card',
+    collisionGroup: 'ambient-label',
+    paintLane: 'ambient-label',
     zIndex: 30,
     interactive: false,
     minDistance: 0,
     maxDistance: OVERLAY_MAX_DISTANCE_M,
     distanceFadeStartRatio: OVERLAY_FADE_START_RATIO,
-    distanceScale: {
-      near: 250000,
-      nearValue: 1,
-      far: 9000000,
-      farValue: 0.62,
-    },
     edgeFade: 'keyhole',
     horizonCull: true,
     terrainOcclusion: false,
-    gapPx: 15,
-    placement: 'above',
+    gapPx: 4,
+    verticalOnly: true,
+    placement: 'below',
   };
 }
 
@@ -660,8 +683,6 @@ export function createPowerPlantsLayer({
   let _reactorUnits = new Map();
   /** @type {Map<string, number>} `'BA|fuel'` -> nameplate MW (bundle). */
   let _nameplate = new Map();
-  /** @type {object[]} Nuclear records with NRC units (label refresh). */
-  let _nuclearRecords = [];
   let _liveAt = null;
 
   /** Ambient cards minus the one the detail card already covers. */
@@ -763,9 +784,6 @@ export function createPowerPlantsLayer({
       _byId.set(record.id, record);
     }
     _reactorUnits = parseReactorUnits(reactorText);
-    _nuclearRecords = _records.filter((r) =>
-      _reactorUnits.has(String(r.plant_code)),
-    );
     _nameplate = fleetNameplateByBaFuel(_records);
     joinNyisoNodes(_records, parseNyisoNodes(nodesText));
     if (_live) refreshLive();
@@ -777,10 +795,8 @@ export function createPowerPlantsLayer({
     _viewer?.scene?.requestRender?.();
   }
 
-  /** Re-derive everything that reads `_live`: nuclear labels, the open card. */
+  /** Re-derive everything that reads `_live`: the open card. */
   function refreshLive() {
-    for (const record of _nuclearRecords)
-      record.entry = createPlantOverlayEntry(record, { live: _live });
     hover.sync((id) => _byId.get(id) || null);
     _cohortDirty = true;
     _lastWalk = 0;
@@ -971,7 +987,6 @@ export function createPowerPlantsLayer({
       _liveAt = null;
       _reactorUnits = new Map();
       _nameplate = new Map();
-      _nuclearRecords = [];
       _lastUpdate = null;
       _error = null;
       _viewer = null;
