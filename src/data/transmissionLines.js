@@ -1,5 +1,10 @@
 import * as Cesium from 'cesium';
 import {
+  createHoverCardController,
+  createHoverCardEntry,
+  DEFAULT_OVERLAY_HOST,
+} from './hoverCard.js';
+import {
   cableClassificationTypeForScene,
   cableClassificationTypeForStack,
 } from './telegeographySubmarineCables.js';
@@ -17,7 +22,9 @@ import {
  * ground-clamped geometry in its workers, so the main thread only pays for
  * the JSON parse; the earlier per-feature entity path froze the app for
  * seconds. The classification target follows the active basemap the same
- * way the submarine-cable layer does.
+ * way the submarine-cable layer does. Each instance carries its line record
+ * as the pick id, so hovering a line shows a card (kV, substations, owner,
+ * status) and clicking pins it.
  */
 
 const backboneUrl = new URL(
@@ -42,6 +49,80 @@ export const LINE_STYLE_BY_KV = Object.freeze([
 ]);
 export const DC_LINE_COLOR = '#40c4ff';
 const LINE_ALPHA = 0.9;
+export const LINE_DETAIL_SOURCE_ID = 'eia-transmission-lines-detail';
+/** HIFLD placeholders: "NOT AVAILABLE" and synthetic "UNKNOWN119979" nodes. */
+const NOT_AVAILABLE = /^(not available|unknown\d*)$/i;
+
+/** Pick ids of this layer. */
+export function isLinePickId(id) {
+  return typeof id === 'string' && id.startsWith('line:');
+}
+
+/** Title-case an all-caps HIFLD field, keeping AC/DC as written. */
+function titleCase(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/\b[a-z]/g, (c) => c.toUpperCase())
+    .replace(/\b(Ac|Dc)\b/g, (m) => m.toUpperCase());
+}
+
+function sentenceCase(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/\b(ac|dc)\b/g, (m) => m.toUpperCase())
+    .replace(/^[a-z]/, (c) => c.toUpperCase());
+}
+
+function known(value) {
+  const text = String(value || '').trim();
+  return text && !NOT_AVAILABLE.test(text) ? text : '';
+}
+
+/**
+ * Card copy for one line record.
+ * @param {object} record `{kv, type, status, owner, sub_1, sub_2}`.
+ * @returns {{title:string, details:string[]}}
+ */
+export function lineCardCopy(record) {
+  const kv = Number(record?.kv) || 0;
+  const from = known(record?.sub_1);
+  const to = known(record?.sub_2);
+  const ends =
+    from && to
+      ? `${titleCase(from)} to ${titleCase(to)}`
+      : titleCase(from || to);
+  const title = ends ? `${kv} kV · ${ends}` : `${kv} kV line`;
+  const details = [];
+  const owner = known(record?.owner);
+  if (owner) details.push(titleCase(owner));
+  const facts = [
+    ...String(known(record?.type))
+      .split(';')
+      .map((part) => sentenceCase(part.trim()))
+      .filter(Boolean),
+    sentenceCase(known(record?.status)),
+  ].filter(Boolean);
+  if (facts.length) details.push(facts.join(' · '));
+  return { title, details };
+}
+
+/**
+ * Hover (card) or pinned (selected) detail entry for a line.
+ * @param {object} record Line record with `position` (the picked ground point).
+ * @param {{pinned?:boolean}} [options]
+ * @returns {object}
+ */
+export function createLineDetailEntry(record, { pinned = false } = {}) {
+  const { title, details } = lineCardCopy(record);
+  return createHoverCardEntry({
+    id: record.id,
+    position: record.position,
+    title,
+    details,
+    accent: lineStyleForFeature(record).color,
+    pinned,
+  });
+}
 
 /**
  * Polyline colour and width for one line feature.
@@ -60,25 +141,32 @@ export function lineStyleForFeature(props) {
 
 /**
  * Flatten a GeoJSON FeatureCollection of LineString / MultiLineString
- * features into one styled record per part. Pure; used by the primitive
- * builder and by tests.
+ * features into one styled part per ring. The parts of one feature share a
+ * plain `record` (the pick id). Pure; used by the primitive builder and by
+ * tests.
  * @param {object} collection Parsed GeoJSON.
- * @returns {{features:number, parts:Array<{positions:number[][], color:string, width:number}>}}
+ * @returns {{features:number, parts:Array<{positions:number[][], color:string, width:number, record:object}>}}
  */
 export function lineParts(collection) {
   const parts = [];
   let features = 0;
+  let index = 0;
   for (const feature of collection?.features || []) {
+    index += 1;
     const geometry = feature?.geometry;
     let rings;
     if (geometry?.type === 'LineString') rings = [geometry.coordinates];
     else if (geometry?.type === 'MultiLineString') rings = geometry.coordinates;
     else continue;
     const { color, width } = lineStyleForFeature(feature.properties);
+    const record = {
+      ...(feature.properties || {}),
+      id: `line:${feature.id ?? index}`,
+    };
     let used = false;
     for (const ring of rings || []) {
       if (!Array.isArray(ring) || ring.length < 2) continue;
-      parts.push({ positions: ring, color, width });
+      parts.push({ positions: ring, color, width, record });
       used = true;
     }
     if (used) features += 1;
@@ -94,6 +182,7 @@ export function lineParts(collection) {
  */
 export function createTransmissionLinesLayer({
   mapStackEventTarget = typeof window !== 'undefined' ? window : null,
+  overlayHost = DEFAULT_OVERLAY_HOST,
 } = {}) {
   let _viewer = null;
   let _enabled = false;
@@ -113,7 +202,7 @@ export function createTransmissionLinesLayer({
   function buildPrimitive(collection) {
     const { features, parts } = lineParts(collection);
     const colorCache = new Map();
-    const instances = parts.map(({ positions, color, width }) => {
+    const instances = parts.map(({ positions, color, width, record }) => {
       let attr = colorCache.get(color);
       if (!attr) {
         attr = Cesium.ColorGeometryInstanceAttribute.fromColor(
@@ -122,6 +211,7 @@ export function createTransmissionLinesLayer({
         colorCache.set(color, attr);
       }
       return new Cesium.GeometryInstance({
+        id: record,
         geometry: new Cesium.GroundPolylineGeometry({
           positions: Cesium.Cartesian3.fromDegreesArray(positions.flat()),
           width,
@@ -133,10 +223,33 @@ export function createTransmissionLinesLayer({
       geometryInstances: instances,
       appearance: new Cesium.PolylineColorAppearance(),
       classificationType: _classification,
-      allowPicking: false,
+      allowPicking: true,
     });
     return { primitive, features };
   }
+
+  /** Our line record from a pick, anchored at the ground point under the cursor. */
+  function pickedLine(picked, windowPosition) {
+    const record = picked?.id;
+    if (!record || typeof record !== 'object' || !isLinePickId(record.id))
+      return null;
+    if (
+      picked.primitive !== _backbone?.primitive &&
+      picked.primitive !== _regional?.primitive
+    )
+      return null;
+    const position = _viewer?.camera?.pickEllipsoid(windowPosition);
+    return position ? { ...record, position } : null;
+  }
+
+  const hover = createHoverCardController({
+    ownerId: 'eia-transmission-lines',
+    sourceId: LINE_DETAIL_SOURCE_ID,
+    isPickId: isLinePickId,
+    resolve: pickedLine,
+    entryFor: createLineDetailEntry,
+    overlayHost,
+  });
 
   async function loadSet(url, generation) {
     const response = await fetch(url);
@@ -233,11 +346,13 @@ export function createTransmissionLinesLayer({
           updateRegionalVisibility,
         );
       }
+      hover.install(viewer);
     },
 
     enable(viewer) {
       if (viewer) _viewer = viewer;
       _enabled = true;
+      hover.setEnabled(true);
       if (!_backbone && !_loading) {
         const generation = _generation;
         _loading = loadSet(backboneUrl, generation)
@@ -269,6 +384,7 @@ export function createTransmissionLinesLayer({
 
     disable() {
       _enabled = false;
+      hover.setEnabled(false);
       if (_backbone) _backbone.primitive.show = false;
       if (_regional) _regional.primitive.show = false;
       _viewer?.scene?.requestRender?.();
@@ -283,6 +399,7 @@ export function createTransmissionLinesLayer({
     destroy(viewer) {
       _generation += 1;
       if (viewer) _viewer = viewer;
+      hover.remove();
       removeSet(_backbone);
       removeSet(_regional);
       _backbone = null;

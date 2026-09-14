@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   createTransmissionLinesLayer,
+  lineCardCopy,
   lineParts,
   lineStyleForFeature,
+  isLinePickId,
   LINE_STYLE_BY_KV,
   DC_LINE_COLOR,
 } from './transmissionLines.js';
@@ -80,6 +82,7 @@ test('lineParts flattens multi-part lines and styles each part', () => {
           ],
         },
         properties: { kv: 345 },
+        id: 'A1',
       },
       {
         geometry: {
@@ -106,5 +109,43 @@ test('lineParts flattens multi-part lines and styles each part', () => {
   assert.equal(parts[0].color, LINE_STYLE_BY_KV[2][1]);
   assert.equal(parts[1].color, DC_LINE_COLOR);
   assert.equal(parts[2].width, LINE_STYLE_BY_KV[1][2]);
+  assert.equal(parts[0].record.id, 'line:A1');
+  assert.equal(parts[1].record, parts[2].record, 'parts share the record');
+  assert.equal(parts[1].record.id, 'line:2');
+  assert.ok(isLinePickId(parts[1].record.id));
+  assert.equal(isLinePickId('plant:1'), false);
   assert.deepEqual(lineParts(null), { features: 0, parts: [] });
+});
+
+test('line card copy names the ends, owner and status, dropping unknowns', () => {
+  assert.deepEqual(
+    lineCardCopy({
+      kv: 1000,
+      volt_class: 'DC',
+      owner: 'BONNEVILLE POWER ADMINISTRATION',
+      status: 'IN SERVICE',
+      type: 'DC; OVERHEAD',
+      sub_1: 'CELILO',
+      sub_2: 'SYLMAR EAST',
+    }),
+    {
+      title: '1000 kV · Celilo to Sylmar East',
+      details: [
+        'Bonneville Power Administration',
+        'DC · Overhead · In service',
+      ],
+    },
+  );
+  assert.deepEqual(
+    lineCardCopy({
+      kv: 345,
+      owner: 'NOT AVAILABLE',
+      status: 'NOT AVAILABLE',
+      type: 'AC; OVERHEAD',
+      sub_1: 'NOT AVAILABLE',
+      sub_2: 'WOLF CREEK',
+    }),
+    { title: '345 kV · Wolf Creek', details: ['AC · Overhead'] },
+  );
+  assert.equal(lineCardCopy({}).title, '0 kV line');
 });
