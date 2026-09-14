@@ -8,6 +8,8 @@ import {
 const DEFAULT_LABEL_MAX = 900;
 const DEFAULT_LABEL_GRID_PX = 132;
 const VISIBILITY_UPDATE_MS = 450;
+/** Features built per main-thread slice before yielding to the event loop. */
+const BUILD_CHUNK = 1500;
 // Each source keeps its own bounded cohort; the host sums their ambient-card
 // paint budgets only up to its 192-card shared-lane ceiling.
 export const LOCAL_OVERLAY_COHORT_LIMIT = 160;
@@ -599,8 +601,20 @@ export function createLocalGeoJsonLayer(
               _stemGeometryDirty = true;
 
               for (let i = 0; i < entities.length; i++) {
+                // Yield between chunks so a 13K-feature bundle (power plants)
+                // does not freeze the page for one long task.
+                if (i > 0 && i % BUILD_CHUNK === 0) {
+                  await new Promise((resolve) => setTimeout(resolve, 0));
+                  if (_destroyed) {
+                    viewer.dataSources.remove(loaded, true);
+                    return;
+                  }
+                }
                 const feature = entities[i];
                 feature.__localLayerId = id; // Tag it so our click handler knows it belongs to this layer
+                // GeoJsonDataSource gives every Point a clamp-to-ground pin
+                // billboard; the anchor below replaces it, so drop the pin.
+                feature.billboard = undefined;
 
                 let pos = feature.position?.getValue(Cesium.JulianDate.now());
 
