@@ -192,6 +192,13 @@ export const DATA_CREDITS = [
       '(public ISO market data)',
   },
   {
+    key: 'iso-interface-flows',
+    html:
+      'Interface flows: ' +
+      '<a href="https://www.nyiso.com/real-time-dashboard" target="_blank" rel="noopener">NYISO interface limits and flows</a> ' +
+      '(public ISO market data)',
+  },
+  {
     key: 'firms',
     html:
       'Active fires: NASA FIRMS — we acknowledge the use of data and/or imagery ' +

@@ -3,6 +3,7 @@ import { celestrakProxy, rocketLaunchesProxy } from './space.js';
 import { tomtomProxy } from './traffic.js';
 import { firmsProxy } from './firms.js';
 import { lmpProxy } from './lmp.js';
+import { interfaceFlowsProxy } from './interfaceFlows.js';
 import { terrainHeightsProxy } from './terrain.js';
 import { adsbdbProxy } from './aircraft/enrichment.js';
 import { overpassProxy } from './overpass.js';
@@ -28,6 +29,7 @@ function localProviderPlugins() {
     tomtomProxy(),
     firmsProxy(),
     lmpProxy(),
+    interfaceFlowsProxy(),
     rocketLaunchesProxy(),
     terrainHeightsProxy(),
     adsbdbProxy(),

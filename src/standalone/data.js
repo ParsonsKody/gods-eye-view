@@ -12,6 +12,7 @@ import aisLiveVesselsLayer from '../data/aisLiveVessels.js';
 import militaryInstallationsLayer from '../data/militaryInstallations.js';
 import militaryAwarenessLayer from '../data/militaryAwareness.js';
 import isoLmpLayer from '../data/isoLmp.js';
+import interfaceFlowsLayer from '../data/interfaceFlows.js';
 import localDataLayers from '../data/localLayers.js';
 import { LAYER_STATE_REGISTRY } from '../data/layerState.js';
 
@@ -48,6 +49,7 @@ export function createStandaloneData({
   dataManager.register(militaryAwarenessLayer);
   militaryAwarenessLayer.attachDataManager(dataManager);
   dataManager.register(isoLmpLayer);
+  dataManager.register(interfaceFlowsLayer);
   for (const layer of localDataLayers) {
     dataManager.register(layer);
   }

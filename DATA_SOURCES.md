@@ -26,6 +26,7 @@ How to read this:
 | **USGS** | Earthquakes | U.S. public domain | "Data courtesy of the U.S. Geological Survey" |
 | **SPP price contour map** (ArcGIS, keyless) | ISO Congestion (LMP): hubs, DC ties, interfaces, binding + M2M constraints | Public ISO market data | "Southwest Power Pool" (courtesy) |
 | **NYISO MIS** (real-time generator LBMP CSV, keyless) | ISO Congestion (LMP): generator nodes | Public ISO market data | "NYISO" (courtesy) |
+| **NYISO MIS** (interface limits and flows CSV, keyless) | Interface Flows: 18 internal and external interfaces, 5-minute flow vs posted limits | Public ISO market data | "NYISO" (courtesy) |
 | **OpenStreetMap (Overpass API)** | Road geometry for traffic | ODbL 1.0 | "© OpenStreetMap contributors" |
 | **TomTom Traffic API** (flow vector tiles) | Live congestion coloring for the traffic layer (optional, BYOK) | [TomTom for Developers terms](https://developer.tomtom.com) (proprietary, your own key; free tier currently 200K tile requests/month — see [current pricing](https://docs.tomtom.com/pricing/)) | "Traffic flow data © TomTom" — registered when live mode activates |
 | **OpenStreetMap (Overpass API)** | Viewport-bounded mapped installation context for Global Context | ODbL 1.0 | "© OpenStreetMap contributors" (incomplete mapped context) |
@@ -68,8 +69,8 @@ Static datasets shipped in the repo for an out-of-the-box experience. **None are
 | **NYISO pricing nodes** (563 generator PTIDs with coordinates, [NYISO MIS](http://mis.nyiso.com/public/csv/generator/generator.csv)) | `iso_nodes/` | **Public ISO data** | ✅ | "NYISO" (courtesy; not legally required) |
 | **EIA Transmission Lines** (3,467 lines >= 345 kV nationwide + 19,846 lines 100 to 230 kV in SPP/NYISO, [EIA Atlas archive](https://atlas.eia.gov/datasets/d4090758322c4d32a4cd002ffaa0aa12_0/about) of HIFLD, frozen Sep 2024) | `eia_transmission_lines/` | **US Government work** (Esri open data terms on the Atlas portal) | ✅ | "EIA / HIFLD" (courtesy; not legally required) |
 | **EIA Power Plants** (13,446 US plants, EIA-860/860M via [EIA Atlas](https://atlas.eia.gov/datasets/bf5c5110b1b944d299bb683cdbd02d2a)) | `eia_power_plants/` | **Public domain** (US Government work) | ✅ (no restrictions) | "U.S. Energy Information Administration" (courtesy; not legally required) |
-| **TeleGeography Submarine Cable Map** (712 cables + 1,917 landing points) | `telegeography_submarine_cables/` | **CC BY-NC-SA 3.0** | ❌ **NonCommercial — remove for commercial use** | "© TeleGeography — submarinecablemap.com" |
 | **EIA-923 net generation** (3,571 monthly-survey plants, Jan to Jun 2026, [EIA-923](https://www.eia.gov/electricity/data/eia923/)) for the capacity factor on plant cards | `eia_power_plants/capacity_factors.json` | **Public domain** (US Government work) | ✅ (no restrictions) | "U.S. Energy Information Administration" (courtesy; not legally required) |
+| **TeleGeography Submarine Cable Map** (712 cables + 1,917 landing points) | `telegeography_submarine_cables/` | **CC BY-NC-SA 3.0** | ❌ **NonCommercial — remove for commercial use** | "© TeleGeography — submarinecablemap.com" |
 | **Natural Earth physical regions** (1,046 land + 292 marine named polygons) | `natural_earth/` | **Public domain** | ✅ (no restrictions) | "Made with Natural Earth" (courtesy credit — not legally required) |
 | **DataSF Analysis Neighborhoods** (41 SF neighborhood polygons) | `neighborhoods/` | **PDDL 1.0** (public domain) | ✅ (no restrictions) | "City & County of San Francisco — DataSF" (courtesy — not legally required) |
 
