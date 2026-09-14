@@ -172,7 +172,8 @@ export const DATA_CREDITS = [
     key: 'eia-power-plants',
     html:
       'Power plants: ' +
-      '<a href="https://atlas.eia.gov/datasets/bf5c5110b1b944d299bb683cdbd02d2a" target="_blank" rel="noopener">U.S. Energy Information Administration (EIA-860)</a> ' +
+      '<a href="https://atlas.eia.gov/datasets/bf5c5110b1b944d299bb683cdbd02d2a" target="_blank" rel="noopener">U.S. Energy Information Administration (EIA-860)</a> + ' +
+      '<a href="https://www.eia.gov/electricity/data/eia923/" target="_blank" rel="noopener">EIA-923 net generation</a> ' +
       '(public domain)',
   },
   {

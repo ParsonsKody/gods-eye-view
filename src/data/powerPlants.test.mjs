@@ -2,9 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+  capacityFactorLine,
   createPlantDetailEntry,
   createPlantOverlayEntry,
   isPlantPickId,
+  parseCapacityFactors,
   parsePlantRecords,
   plantCardCopy,
   plantLegend,
@@ -93,6 +95,54 @@ test('card copy: ambient card keeps the summary, hover card adds tech and EIA id
   assert.equal(pinned.variant, 'selected');
   assert.equal(pinned.accent, POWER_PLANT_FUEL_COLORS.gas);
   assert.equal(pinned.details.length, 2);
+});
+
+test('capacity factor joins the EIA-923 sidecar by plant code onto the hover card only', () => {
+  const text = readFileSync(
+    new URL(
+      './local_data/eia_power_plants/capacity_factors.json',
+      import.meta.url,
+    ),
+    'utf8',
+  );
+  const cf = parseCapacityFactors(text);
+  assert.ok(cf.genMwh.size > 3000);
+  assert.equal(cf.hours, 4344);
+  assert.equal(cf.period, '2026-01 to 2026-06');
+  assert.ok(cf.genMwh.has('2161'), 'James River reports monthly');
+  assert.equal(parseCapacityFactors('not json'), null);
+  assert.equal(parseCapacityFactors('{"hours":0,"gen_mwh":{}}'), null);
+
+  const meta = { period: '2026-01 to 2026-06', hours: 4344 };
+  const record = { ...JAMES_RIVER, genMwh: 37664 };
+  assert.equal(
+    capacityFactorLine(record, meta),
+    'CF 6% · 38 GWh Jan to Jun 2026',
+  );
+  assert.equal(
+    capacityFactorLine({ total_mw: 563, genMwh: 796111 }, meta),
+    'CF 33% · 796 GWh Jan to Jun 2026',
+  );
+  assert.equal(
+    capacityFactorLine({ total_mw: 5, genMwh: -120 }, meta),
+    'CF 0% · 0.0 GWh Jan to Jun 2026',
+  );
+  assert.equal(capacityFactorLine(JAMES_RIVER, meta), null);
+  assert.equal(capacityFactorLine(record, null), null);
+  assert.equal(
+    capacityFactorLine({ total_mw: 10, genMwh: 5000 }, { period: '2025-11 to 2026-02', hours: 2880 }),
+    'CF 17% · 5.0 GWh Nov 2025 to Feb 2026',
+  );
+
+  assert.deepEqual(plantCardCopy(record, meta).details, [
+    'natural gas · 155 MW · City Utilities of Springfield - (MO)',
+    'Natural Gas Fired Combustion Turbine · EIA 2161',
+    'CF 6% · 38 GWh Jan to Jun 2026',
+  ]);
+  assert.equal(plantCardCopy(record).details.length, 2);
+  const drawn = { ...record, id: 'plant:2161', position: { x: 1, y: 2, z: 3 } };
+  assert.equal(createPlantOverlayEntry(drawn).details.length, 1);
+  assert.equal(createPlantDetailEntry(drawn, { cfMeta: meta }).details.length, 3);
 });
 
 test('legend counts sites per fuel in display order', () => {

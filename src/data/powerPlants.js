@@ -18,11 +18,18 @@ import { shouldRecomputeInfraLod } from './localGeojsonLod.js';
  * transmission lines. All 13K dots are always drawn (a cheap pre-render
  * occluder walk hides the far side of the globe); only the ambient cards
  * are budgeted, through the same grid cohort the other local layers use.
- * Hovering a dot shows the detail card, clicking pins it.
+ * Hovering a dot shows the detail card, clicking pins it. The card also
+ * carries a capacity factor from the EIA-923 sidecar
+ * (capacity_factors.json, tools/energy/fetch_capacity_factors.py) for the
+ * plants on EIA's monthly survey.
  */
 
 const plantsUrl = new URL(
   './local_data/eia_power_plants/plants.geojsonl',
+  import.meta.url,
+).href;
+const capacityFactorsUrl = new URL(
+  './local_data/eia_power_plants/capacity_factors.json',
   import.meta.url,
 ).href;
 
@@ -125,6 +132,75 @@ export function parsePlantRecords(text) {
   return records;
 }
 
+/**
+ * Parse the EIA-923 sidecar.
+ * @param {string} text JSON `{period, hours, gen_mwh:{code:mwh}}`.
+ * @returns {{period:string, hours:number, genMwh:Map<string, number>}|null}
+ */
+export function parseCapacityFactors(text) {
+  let json;
+  try {
+    json = JSON.parse(String(text || ''));
+  } catch {
+    return null;
+  }
+  const hours = Number(json?.hours);
+  if (!Number.isFinite(hours) || hours <= 0 || !json?.gen_mwh) return null;
+  const genMwh = new Map();
+  for (const [code, value] of Object.entries(json.gen_mwh)) {
+    const mwh = Number(value);
+    if (Number.isFinite(mwh)) genMwh.set(String(code), mwh);
+  }
+  return { period: String(json.period || ''), hours, genMwh };
+}
+
+const MONTHS = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+/** `2026-01 to 2026-06` -> `Jan to Jun 2026`. */
+function periodText(period) {
+  const m = /^(\d{4})-(\d{2}) to (\d{4})-(\d{2})$/.exec(String(period || ''));
+  if (!m) return String(period || '');
+  const from = MONTHS[Number(m[2]) - 1];
+  const to = MONTHS[Number(m[4]) - 1];
+  return m[1] === m[3]
+    ? `${from} to ${to} ${m[3]}`
+    : `${from} ${m[1]} to ${to} ${m[3]}`;
+}
+
+/**
+ * Card line for a plant's capacity factor, or null when the sidecar has
+ * no row for it. Negative net generation (station service only) reads 0%.
+ * @param {object} record `{total_mw, genMwh}`.
+ * @param {{period:string, hours:number}|null} meta
+ * @returns {string|null}
+ */
+export function capacityFactorLine(record, meta) {
+  const mwh = Number(record?.genMwh);
+  const mw = Number(record?.total_mw);
+  const hours = Number(meta?.hours);
+  if (!Number.isFinite(mwh) || !(mw > 0) || !(hours > 0)) return null;
+  const cf = Math.max(0, mwh / (mw * hours));
+  const gwh = Math.max(0, mwh) / 1000;
+  const energy =
+    gwh >= 10
+      ? `${Math.round(gwh).toLocaleString('en-US')} GWh`
+      : `${gwh.toFixed(1)} GWh`;
+  return `CF ${Math.round(cf * 100)}% · ${energy} ${periodText(meta.period)}`;
+}
+
 function mwText(mw) {
   const value = Number(mw);
   return Number.isFinite(value) && value > 0
@@ -134,11 +210,13 @@ function mwText(mw) {
 
 /**
  * Card copy for one plant. The first detail line is what the ambient card
- * shows; the hover card adds the technology and the EIA id.
+ * shows; the hover card adds the technology, the EIA id and, when the
+ * EIA-923 sidecar has the plant, its capacity factor.
  * @param {object} record
+ * @param {{period:string, hours:number}|null} [cfMeta]
  * @returns {{title:string, details:string[]}}
  */
-export function plantCardCopy(record) {
+export function plantCardCopy(record, cfMeta = null) {
   const title = record?.name || 'Power plant';
   const summary = [
     record?.prim_source || record?.fuel,
@@ -153,7 +231,8 @@ export function plantCardCopy(record) {
   ]
     .filter(Boolean)
     .join(' · ');
-  return { title, details: [summary, tech].filter(Boolean) };
+  const cf = capacityFactorLine(record, cfMeta);
+  return { title, details: [summary, tech, cf].filter(Boolean) };
 }
 
 /**
@@ -198,8 +277,11 @@ export function createPlantOverlayEntry(record) {
  * @param {{pinned?:boolean}} [options]
  * @returns {object}
  */
-export function createPlantDetailEntry(record, { pinned = false } = {}) {
-  const { title, details } = plantCardCopy(record);
+export function createPlantDetailEntry(
+  record,
+  { pinned = false, cfMeta = null } = {},
+) {
+  const { title, details } = plantCardCopy(record, cfMeta);
   return createHoverCardEntry({
     id: record.id,
     position: record.position,
@@ -262,6 +344,8 @@ export function createPowerPlantsLayer({
   /** Id of the record carrying the hover or pinned card, if any. */
   let _cardId = null;
   let _rowControlsListener = null;
+  /** @type {{period:string, hours:number}|null} EIA-923 sidecar metadata. */
+  let _cfMeta = null;
 
   /** Ambient cards minus the one the detail card already covers. */
   function publishCohort() {
@@ -287,7 +371,8 @@ export function createPowerPlantsLayer({
     sourceId: PLANT_DETAIL_SOURCE_ID,
     isPickId: isPlantPickId,
     resolve: pickedRecord,
-    entryFor: createPlantDetailEntry,
+    entryFor: (record, { pinned }) =>
+      createPlantDetailEntry(record, { pinned, cfMeta: _cfMeta }),
     onChange: (record) => {
       const id = record?.id || null;
       if (id === _cardId) return;
@@ -298,9 +383,26 @@ export function createPowerPlantsLayer({
   });
 
   async function load(generation) {
-    const text = await fetchText(plantsUrl);
+    const [text, cfText] = await Promise.all([
+      fetchText(plantsUrl),
+      fetchText(capacityFactorsUrl).catch((err) => {
+        console.warn(
+          '[Data:Power Plants] capacity factors unavailable:',
+          err?.message || err,
+        );
+        return '';
+      }),
+    ]);
     if (generation !== _generation || !_points) return;
     const parsed = parsePlantRecords(text);
+    const cf = parseCapacityFactors(cfText);
+    if (cf) {
+      _cfMeta = { period: cf.period, hours: cf.hours };
+      for (const record of parsed) {
+        const mwh = cf.genMwh.get(String(record.plant_code));
+        if (mwh !== undefined) record.genMwh = mwh;
+      }
+    }
     for (let i = 0; i < parsed.length; i++) {
       if (i > 0 && i % PARSE_CHUNK === 0) {
         // Yield so a 13K-row bundle never blocks one long task.
@@ -475,6 +577,7 @@ export function createPowerPlantsLayer({
       _cardId = null;
       _byId = new Map();
       _legend = [];
+      _cfMeta = null;
       _lastUpdate = null;
       _error = null;
       _viewer = null;

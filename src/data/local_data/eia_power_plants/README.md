@@ -23,5 +23,15 @@ biomass, other), `prim_source` (EIA primary energy source text), `tech`,
 `total_mw` (nameplate, all generators at the site), `state`, `utility`,
 `period` (EIA-860M vintage, YYYYMM).
 
+Capacity factors: 3571 plants, EIA-923 2026-01 to 2026-06 (4344 h), pulled 2026-09-14
+
+Sidecar `capacity_factors.json` (script: `tools/energy/fetch_capacity_factors.py`):
+`gen_mwh` per EIA plant code from the EIA-923 monthly release, sheet
+"Page 1 Generation and Fuel Data", summed over the monthly Netgen columns
+and over all prime movers at the site. The monthly release covers only the
+plants on EIA's monthly survey (about 90% of US generation); annual-only
+reporters have no row and show no capacity factor. The layer computes
+`gen_mwh / (total_mw x hours)`. Rerun after each EIA monthly release.
+
 License: public domain (work of the United States Government). No
 attribution is legally required; the app credits EIA as a courtesy.
