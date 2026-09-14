@@ -10,7 +10,7 @@ Source: `https://services2.arcgis.com/FiaPA4ga0iQKduv3/arcgis/rest/services/US_E
 
 Script: `tools/energy/fetch_lines.py`
 
-Pulled: 2026-09-13
+Pulled: 2026-09-14
 
 Backbone count: 3467 (`lines_backbone.geojson`, VOLTAGE >= 345 kV, nationwide)
 
@@ -19,7 +19,8 @@ SPP and NYISO bounding boxes; shown only below 1,800 km camera height)
 
 Fields: `kv`, `volt_class`, `owner`, `status`, `type` (AC/DC, overhead or
 underground), `sub_1`, `sub_2`. Coordinates rounded to 4 decimals and
-thinned to about 150 m vertex spacing.
+simplified with Douglas-Peucker at 0.003 degrees (about 300 m): backbone
+32,262 vertices, regional 77,207 vertices.
 
 License: US Government work redistributed by EIA under the Esri open data
 terms of the Atlas portal. No attribution is legally required; the app

@@ -10,9 +10,14 @@ import {
  * a nationwide backbone (>= 345 kV) drawn whenever the layer is on, and a
  * regional set (100 to 230 kV, SPP + NYISO footprints) that loads lazily
  * the first time the camera drops below REGIONAL_MAX_CAMERA_HEIGHT_M and
- * hides again above it. Lines are ground-clamped polylines; the
- * classification target follows the active basemap the same way the
- * submarine-cable layer does.
+ * hides again above it.
+ *
+ * Each file becomes ONE batched GroundPolylinePrimitive with a colour
+ * attribute per line (the traffic heat-line pattern). Cesium builds the
+ * ground-clamped geometry in its workers, so the main thread only pays for
+ * the JSON parse; the earlier per-feature entity path froze the app for
+ * seconds. The classification target follows the active basemap the same
+ * way the submarine-cable layer does.
  */
 
 const backboneUrl = new URL(
@@ -36,6 +41,7 @@ export const LINE_STYLE_BY_KV = Object.freeze([
   Object.freeze([0, '#9e9e9e', 1]),
 ]);
 export const DC_LINE_COLOR = '#40c4ff';
+const LINE_ALPHA = 0.9;
 
 /**
  * Polyline colour and width for one line feature.
@@ -53,6 +59,34 @@ export function lineStyleForFeature(props) {
 }
 
 /**
+ * Flatten a GeoJSON FeatureCollection of LineString / MultiLineString
+ * features into one styled record per part. Pure; used by the primitive
+ * builder and by tests.
+ * @param {object} collection Parsed GeoJSON.
+ * @returns {{features:number, parts:Array<{positions:number[][], color:string, width:number}>}}
+ */
+export function lineParts(collection) {
+  const parts = [];
+  let features = 0;
+  for (const feature of collection?.features || []) {
+    const geometry = feature?.geometry;
+    let rings;
+    if (geometry?.type === 'LineString') rings = [geometry.coordinates];
+    else if (geometry?.type === 'MultiLineString') rings = geometry.coordinates;
+    else continue;
+    const { color, width } = lineStyleForFeature(feature.properties);
+    let used = false;
+    for (const ring of rings || []) {
+      if (!Array.isArray(ring) || ring.length < 2) continue;
+      parts.push({ positions: ring, color, width });
+      used = true;
+    }
+    if (used) features += 1;
+  }
+  return { features, parts };
+}
+
+/**
  * Build the transmission-lines layer module.
  * @param {object} [options]
  * @param {EventTarget|null} [options.mapStackEventTarget] Basemap switch source.
@@ -65,6 +99,7 @@ export function createTransmissionLinesLayer({
   let _enabled = false;
   let _error = null;
   let _lastUpdate = null;
+  /** @type {{primitive:Cesium.GroundPolylinePrimitive, features:number}|null} */
   let _backbone = null;
   let _regional = null;
   let _loading = null;
@@ -75,16 +110,32 @@ export function createTransmissionLinesLayer({
   let _mapStackListener = null;
   let _moveEndRemover = null;
 
-  function styleEntity(entity) {
-    if (!entity?.polyline) return;
-    const props = entity.properties?.getValue?.(Cesium.JulianDate.now()) || {};
-    const { color, width } = lineStyleForFeature(props);
-    entity.polyline.material = new Cesium.ColorMaterialProperty(
-      Cesium.Color.fromCssColorString(color).withAlpha(0.9),
-    );
-    entity.polyline.width = width;
-    entity.polyline.clampToGround = true;
-    entity.polyline.classificationType = _classification;
+  function buildPrimitive(collection) {
+    const { features, parts } = lineParts(collection);
+    const colorCache = new Map();
+    const instances = parts.map(({ positions, color, width }) => {
+      let attr = colorCache.get(color);
+      if (!attr) {
+        attr = Cesium.ColorGeometryInstanceAttribute.fromColor(
+          Cesium.Color.fromCssColorString(color).withAlpha(LINE_ALPHA),
+        );
+        colorCache.set(color, attr);
+      }
+      return new Cesium.GeometryInstance({
+        geometry: new Cesium.GroundPolylineGeometry({
+          positions: Cesium.Cartesian3.fromDegreesArray(positions.flat()),
+          width,
+        }),
+        attributes: { color: attr },
+      });
+    });
+    const primitive = new Cesium.GroundPolylinePrimitive({
+      geometryInstances: instances,
+      appearance: new Cesium.PolylineColorAppearance(),
+      classificationType: _classification,
+      allowPicking: false,
+    });
+    return { primitive, features };
   }
 
   async function loadSet(url, generation) {
@@ -92,23 +143,21 @@ export function createTransmissionLinesLayer({
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const json = await response.json();
     if (generation !== _generation) return null;
-    const source = await Cesium.GeoJsonDataSource.load(json, {
-      clampToGround: true,
-      strokeWidth: 1,
-    });
-    if (generation !== _generation) return null;
-    for (const entity of source.entities.values) styleEntity(entity);
-    return source;
+    const scene = _viewer?.scene;
+    if (!scene) return null;
+    if (!Cesium.GroundPolylinePrimitive.isSupported(scene)) {
+      throw new Error('ground polylines unsupported on this GPU');
+    }
+    const set = buildPrimitive(json);
+    scene.groundPrimitives.add(set.primitive);
+    return set;
   }
 
   function applyClassification(next) {
     if (next === undefined || next === _classification) return;
     _classification = next;
-    for (const source of [_backbone, _regional]) {
-      if (!source) continue;
-      for (const entity of source.entities.values) {
-        if (entity.polyline) entity.polyline.classificationType = next;
-      }
+    for (const set of [_backbone, _regional]) {
+      if (set) set.primitive.classificationType = next;
     }
     _viewer?.scene?.requestRender?.();
   }
@@ -124,11 +173,10 @@ export function createTransmissionLinesLayer({
     if (wanted && !_regional && !_regionalLoading) {
       const generation = _generation;
       _regionalLoading = loadSet(regionalUrl, generation)
-        .then((source) => {
-          if (!source || !_viewer || generation !== _generation) return;
-          _regional = source;
-          _viewer.dataSources.add(source);
-          source.show = _enabled && regionalWanted();
+        .then((set) => {
+          if (!set || !_viewer || generation !== _generation) return;
+          _regional = set;
+          set.primitive.show = _enabled && regionalWanted();
         })
         .catch((err) => {
           _error = err?.message || String(err);
@@ -138,17 +186,23 @@ export function createTransmissionLinesLayer({
         });
       return;
     }
-    if (_regional && _regional.show !== wanted) {
-      _regional.show = wanted;
+    if (_regional && _regional.primitive.show !== wanted) {
+      _regional.primitive.show = wanted;
       _viewer.scene?.requestRender?.();
     }
   }
 
   function count() {
-    return (
-      (_backbone?.entities?.values?.length || 0) +
-      (_regional?.entities?.values?.length || 0)
-    );
+    return (_backbone?.features || 0) + (_regional?.features || 0);
+  }
+
+  function removeSet(set) {
+    if (!set) return;
+    try {
+      _viewer?.scene?.groundPrimitives?.remove(set.primitive);
+    } catch {
+      /* collection already gone */
+    }
   }
 
   return {
@@ -187,11 +241,10 @@ export function createTransmissionLinesLayer({
       if (!_backbone && !_loading) {
         const generation = _generation;
         _loading = loadSet(backboneUrl, generation)
-          .then((source) => {
-            if (!source || !_viewer || generation !== _generation) return;
-            _backbone = source;
-            _viewer.dataSources.add(source);
-            source.show = _enabled;
+          .then((set) => {
+            if (!set || !_viewer || generation !== _generation) return;
+            _backbone = set;
+            set.primitive.show = _enabled;
             _lastUpdate = Date.now();
             _error = null;
           })
@@ -205,19 +258,19 @@ export function createTransmissionLinesLayer({
       // Do not await the load: the manager treats a slow enable as a failed
       // toggle. Visibility is applied when the load settles.
       void _loading?.then(() => {
-        if (_backbone) _backbone.show = _enabled;
+        if (_backbone) _backbone.primitive.show = _enabled;
         updateRegionalVisibility();
         _viewer?.scene?.requestRender?.();
       });
-      if (_backbone) _backbone.show = _enabled;
+      if (_backbone) _backbone.primitive.show = _enabled;
       updateRegionalVisibility();
       _viewer?.scene?.requestRender?.();
     },
 
     disable() {
       _enabled = false;
-      if (_backbone) _backbone.show = false;
-      if (_regional) _regional.show = false;
+      if (_backbone) _backbone.primitive.show = false;
+      if (_regional) _regional.primitive.show = false;
       _viewer?.scene?.requestRender?.();
     },
 
@@ -229,16 +282,9 @@ export function createTransmissionLinesLayer({
 
     destroy(viewer) {
       _generation += 1;
-      const target = viewer || _viewer;
-      for (const source of [_backbone, _regional]) {
-        if (source && target?.dataSources) {
-          try {
-            target.dataSources.remove(source, true);
-          } catch {
-            /* collection already gone */
-          }
-        }
-      }
+      if (viewer) _viewer = viewer;
+      removeSet(_backbone);
+      removeSet(_regional);
       _backbone = null;
       _regional = null;
       _enabled = false;

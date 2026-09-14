@@ -15,8 +15,11 @@ Writes two files under src/data/local_data/eia_transmission_lines/:
   lines_regional.geojson   100 kV <= VOLTAGE < 345 kV inside the SPP + NY
                            bounding boxes (the regions the LMP layer covers)
 
-Coordinates are rounded to 4 decimals (about 11 m) and consecutive vertices
-closer than SIMPLIFY_DEG are dropped to keep the bundle small.
+Coordinates are rounded to 4 decimals (about 11 m) and each part is
+simplified with Douglas-Peucker at SIMPLIFY_DEG. The lines draw 1 to 3 px
+wide at continental camera heights, where 1 px covers well over 300 m, so
+the tolerance is invisible and cuts the vertex count several-fold. Fewer
+vertices means fewer ground-clamped wall segments for Cesium to build.
 """
 
 from __future__ import annotations
@@ -44,7 +47,7 @@ README = OUT_DIR / "README.md"
 
 BACKBONE_MIN_KV = 345
 REGIONAL_MIN_KV = 100
-SIMPLIFY_DEG = 0.0015  # about 150 m; lines are drawn at continental zoom
+SIMPLIFY_DEG = 0.003  # Douglas-Peucker tolerance, about 300 m
 
 # lon_min, lat_min, lon_max, lat_max
 REGIONS = {
@@ -70,14 +73,50 @@ def fetch_page(offset: int) -> dict:
         return json.load(resp)
 
 
-def simplify(coords: list[list[float]]) -> list[list[float]]:
-    out: list[list[float]] = []
-    for lon, lat in ((round(c[0], 4), round(c[1], 4)) for c in coords):
-        if out and abs(out[-1][0] - lon) < SIMPLIFY_DEG and abs(out[-1][1] - lat) < SIMPLIFY_DEG:
+def _point_segment_distance(p: list[float], a: list[float], b: list[float]) -> float:
+    """Distance from p to segment ab in degrees (planar; fine at this tolerance)."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    if dx == 0 and dy == 0:
+        return ((p[0] - a[0]) ** 2 + (p[1] - a[1]) ** 2) ** 0.5
+    t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy)
+    t = max(0.0, min(1.0, t))
+    qx, qy = a[0] + t * dx, a[1] + t * dy
+    return ((p[0] - qx) ** 2 + (p[1] - qy) ** 2) ** 0.5
+
+
+def douglas_peucker(coords: list[list[float]], tol: float) -> list[list[float]]:
+    """Iterative Douglas-Peucker; keeps the first and last vertex."""
+    n = len(coords)
+    if n < 3:
+        return list(coords)
+    keep = [False] * n
+    keep[0] = keep[-1] = True
+    stack = [(0, n - 1)]
+    while stack:
+        lo, hi = stack.pop()
+        if hi - lo < 2:
             continue
-        out.append([lon, lat])
-    if len(out) < 2 and coords:
-        out = [[round(coords[0][0], 4), round(coords[0][1], 4)], [round(coords[-1][0], 4), round(coords[-1][1], 4)]]
+        best, best_d = -1, tol
+        for i in range(lo + 1, hi):
+            d = _point_segment_distance(coords[i], coords[lo], coords[hi])
+            if d > best_d:
+                best, best_d = i, d
+        if best >= 0:
+            keep[best] = True
+            stack.append((lo, best))
+            stack.append((best, hi))
+    return [c for c, k in zip(coords, keep) if k]
+
+
+def simplify(coords: list[list[float]]) -> list[list[float]]:
+    rounded = [[round(c[0], 4), round(c[1], 4)] for c in coords]
+    out: list[list[float]] = []
+    for c in rounded:
+        if not out or out[-1] != c:
+            out.append(c)
+    out = douglas_peucker(out, SIMPLIFY_DEG)
+    if len(out) < 2 and rounded:
+        out = [rounded[0], rounded[-1]]
     return out
 
 

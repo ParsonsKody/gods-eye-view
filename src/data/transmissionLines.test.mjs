@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   createTransmissionLinesLayer,
+  lineParts,
   lineStyleForFeature,
   LINE_STYLE_BY_KV,
   DC_LINE_COLOR,
@@ -65,4 +66,45 @@ test('bundled line files keep their feature counts', () => {
     );
     assert.equal(json.features.length, count);
   }
+});
+
+test('lineParts flattens multi-part lines and styles each part', () => {
+  const { features, parts } = lineParts({
+    features: [
+      {
+        geometry: {
+          type: 'LineString',
+          coordinates: [
+            [-97, 38],
+            [-96, 38],
+          ],
+        },
+        properties: { kv: 345 },
+      },
+      {
+        geometry: {
+          type: 'MultiLineString',
+          coordinates: [
+            [
+              [-75, 42],
+              [-74, 42],
+            ],
+            [[-74, 42]],
+            [
+              [-73, 42],
+              [-72, 43],
+            ],
+          ],
+        },
+        properties: { kv: 500, type: 'DC; OVERHEAD' },
+      },
+      { geometry: { type: 'Point', coordinates: [0, 0] }, properties: {} },
+    ],
+  });
+  assert.equal(features, 2);
+  assert.equal(parts.length, 3);
+  assert.equal(parts[0].color, LINE_STYLE_BY_KV[2][1]);
+  assert.equal(parts[1].color, DC_LINE_COLOR);
+  assert.equal(parts[2].width, LINE_STYLE_BY_KV[1][2]);
+  assert.deepEqual(lineParts(null), { features: 0, parts: [] });
 });
