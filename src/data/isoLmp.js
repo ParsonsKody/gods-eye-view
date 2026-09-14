@@ -1,9 +1,9 @@
 import * as Cesium from 'cesium';
 import {
-  clearOverlaySource,
-  setOverlayEntries,
-  setOverlaySourceVisible,
-} from '../overlays/worldOverlay.js';
+  createHoverCardController,
+  createHoverCardEntry,
+  DEFAULT_OVERLAY_HOST,
+} from './hoverCard.js';
 import {
   mccColor,
   mccPixelSize,
@@ -13,11 +13,6 @@ import {
   formatIntervalEt,
   CONSTRAINT_COLOR,
 } from './lmpFeeds.js';
-import {
-  bindTrackingClickGesture,
-  isTrackingClickGesture,
-} from './trackingClickGesture.js';
-import { registerPickOwner, unregisterPickOwner } from './pickRegistry.js';
 
 /**
  * ISO real-time congestion layer: SPP + NYISO nodal LMP with the marginal
@@ -45,16 +40,6 @@ export const LMP_OVERLAY_SOURCE_ID = 'iso-lmp';
 export const LMP_DETAIL_SOURCE_ID = 'iso-lmp-detail';
 export const LMP_OVERLAY_COHORT_LIMIT = 96;
 export const LMP_OVERLAY_COLLISION_CAPACITY = 48;
-/** Leading-edge throttle for hover picks while the pointer moves. */
-export const LMP_HOVER_PICK_THROTTLE_MS = 120;
-/** Linger before an unhovered card is released. */
-export const LMP_HOVER_RELEASE_MS = 1000;
-
-const DEFAULT_OVERLAY_HOST = Object.freeze({
-  setEntries: setOverlayEntries,
-  setVisible: setOverlaySourceVisible,
-  clearSource: clearOverlaySource,
-});
 
 /** Pick ids of this layer: the record's string id. */
 export function isLmpPickId(id) {
@@ -106,26 +91,14 @@ export function createLmpDetailEntry(record, { pinned = false, nowMs } = {}) {
     record.kind === 'binding' || record.kind === 'm2m'
       ? CONSTRAINT_COLOR
       : mccColor(record.mcc);
-  return {
-    id: String(record.id),
+  return createHoverCardEntry({
+    id: record.id,
     position: record.position,
-    variant: pinned ? 'selected' : 'card',
-    selected: pinned,
-    protected: true,
-    paintLane: pinned ? 'selected' : 'ambient-card',
-    collisionGroup: 'ambient-card',
-    priority: Number.MAX_SAFE_INTEGER,
-    zIndex: 40,
     title,
     details,
     accent,
-    interactive: false,
-    verticalOnly: true,
-    placement: 'above',
-    edgeFade: 'keyhole',
-    horizonCull: true,
-    terrainOcclusion: false,
-  };
+    pinned,
+  });
 }
 
 /** Keep the most congested points, stable identity as the tie-break. */
@@ -234,15 +207,24 @@ export function createIsoLmpLayer({ overlayHost = DEFAULT_OVERLAY_HOST } = {}) {
   /** @type {Map<string, object>|null} */
   let _nyisoNodes = null;
   let _nyisoNodesPromise = null;
-  let _handler = null;
-  let _hoverId = null;
-  let _pinnedId = null;
-  let _hoverLastPickAt = 0;
-  let _hoverReleaseTimer = 0;
-  let _cameraMoving = false;
-  let _removeMoveStart = null;
-  let _removeMoveEnd = null;
   let _rowControlsListener = null;
+
+  /** Our record from a scene.pick() result, or null. */
+  function pickedRecord(picked) {
+    const id = picked?.id;
+    if (!id || typeof id !== 'object') return null;
+    const drawn = _drawn.get(String(id.id));
+    return drawn && drawn.record === id ? drawn.record : null;
+  }
+
+  const hover = createHoverCardController({
+    ownerId: 'iso-lmp',
+    sourceId: LMP_DETAIL_SOURCE_ID,
+    isPickId: isLmpPickId,
+    resolve: pickedRecord,
+    entryFor: (record, { pinned }) => createLmpDetailEntry(record, { pinned }),
+    overlayHost,
+  });
 
   async function loadNyisoNodes() {
     if (_nyisoNodes) return _nyisoNodes;
@@ -261,130 +243,6 @@ export function createIsoLmpLayer({ overlayHost = DEFAULT_OVERLAY_HOST } = {}) {
         });
     }
     return _nyisoNodesPromise;
-  }
-
-  /** Our record from a scene.pick() result, or null. */
-  function pickedRecord(picked) {
-    const id = picked?.id;
-    if (!id || typeof id !== 'object') return null;
-    const drawn = _drawn.get(String(id.id));
-    return drawn && drawn.record === id ? drawn.record : null;
-  }
-
-  function setCursor(pointer) {
-    const canvas = _viewer?.scene?.canvas;
-    if (canvas) canvas.style.cursor = pointer ? 'pointer' : '';
-  }
-
-  function publishDetail() {
-    const id = _pinnedId || _hoverId;
-    const drawn = id ? _drawn.get(id) : null;
-    if (!_enabled || !drawn) {
-      overlayHost.clearSource(LMP_DETAIL_SOURCE_ID);
-      return;
-    }
-    overlayHost.setEntries(
-      LMP_DETAIL_SOURCE_ID,
-      [createLmpDetailEntry(drawn.record, { pinned: id === _pinnedId })],
-      { cohortLimit: 1, collisionCapacity: 1, moving: false },
-    );
-  }
-
-  function cancelHoverRelease() {
-    if (_hoverReleaseTimer) {
-      clearTimeout(_hoverReleaseTimer);
-      _hoverReleaseTimer = 0;
-    }
-  }
-
-  function scheduleHoverRelease() {
-    if (_hoverReleaseTimer) return;
-    _hoverReleaseTimer = setTimeout(() => {
-      _hoverReleaseTimer = 0;
-      _hoverId = null;
-      publishDetail();
-    }, LMP_HOVER_RELEASE_MS);
-  }
-
-  function clearHover() {
-    cancelHoverRelease();
-    _hoverId = null;
-    _hoverLastPickAt = 0;
-    setCursor(false);
-  }
-
-  /**
-   * Throttled MOUSE_MOVE pass (CCTV pattern): at most ~8 picks/s while the
-   * pointer moves, nothing while it rests or the camera flies.
-   */
-  function handleHoverMove(position) {
-    if (!_enabled || _cameraMoving || !position) return;
-    if (!_viewer || _viewer.isDestroyed()) return;
-    const now = Date.now();
-    if (now - _hoverLastPickAt < LMP_HOVER_PICK_THROTTLE_MS) return;
-    _hoverLastPickAt = now;
-    let picked = null;
-    try {
-      picked = _viewer.scene.pick(position);
-    } catch {
-      picked = null;
-    }
-    const record = pickedRecord(picked);
-    setCursor(Boolean(record));
-    if (record) {
-      cancelHoverRelease();
-      if (record.id !== _hoverId) {
-        _hoverId = record.id;
-        publishDetail();
-      }
-    } else if (_hoverId) {
-      scheduleHoverRelease();
-    }
-  }
-
-  function handleClick(click, gesture) {
-    if (!_enabled || !_viewer || _viewer.isDestroyed()) return;
-    if (!isTrackingClickGesture(gesture)) return;
-    let picked = null;
-    try {
-      picked = _viewer.scene.pick(click?.position);
-    } catch {
-      picked = null;
-    }
-    const record = pickedRecord(picked);
-    if (record) {
-      _pinnedId = _pinnedId === record.id ? null : record.id;
-    } else if (_pinnedId) {
-      _pinnedId = null;
-    } else {
-      return;
-    }
-    publishDetail();
-  }
-
-  function installInput(viewer) {
-    if (_handler || !viewer?.scene?.canvas) return;
-    _handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
-    bindTrackingClickGesture(_handler, handleClick, {
-      onMouseMove: (event) => handleHoverMove(event?.endPosition),
-    });
-    _removeMoveStart = viewer.camera.moveStart.addEventListener(() => {
-      _cameraMoving = true;
-    });
-    _removeMoveEnd = viewer.camera.moveEnd.addEventListener(() => {
-      _cameraMoving = false;
-    });
-    registerPickOwner('iso-lmp', isLmpPickId);
-  }
-
-  function removeInput() {
-    unregisterPickOwner('iso-lmp');
-    if (_removeMoveStart) _removeMoveStart();
-    if (_removeMoveEnd) _removeMoveEnd();
-    _removeMoveStart = null;
-    _removeMoveEnd = null;
-    if (_handler && !_handler.isDestroyed()) _handler.destroy();
-    _handler = null;
   }
 
   /** Update points in place: mutate existing, add new, drop vanished. */
@@ -434,8 +292,6 @@ export function createIsoLmpLayer({ overlayHost = DEFAULT_OVERLAY_HOST } = {}) {
       _points.remove(drawn.point);
       _drawn.delete(id);
     }
-    if (_hoverId && !_drawn.has(_hoverId)) _hoverId = null;
-    if (_pinnedId && !_drawn.has(_pinnedId)) _pinnedId = null;
   }
 
   function loadingLabel() {
@@ -469,26 +325,22 @@ export function createIsoLmpLayer({ overlayHost = DEFAULT_OVERLAY_HOST } = {}) {
       _legend = [];
       _enabled = false;
       overlayHost.setVisible(LMP_OVERLAY_SOURCE_ID, false);
-      overlayHost.setVisible(LMP_DETAIL_SOURCE_ID, false);
-      installInput(viewer);
+      hover.install(viewer);
     },
 
     enable() {
       _enabled = true;
       if (_points) _points.show = true;
       overlayHost.setVisible(LMP_OVERLAY_SOURCE_ID, true);
-      overlayHost.setVisible(LMP_DETAIL_SOURCE_ID, true);
+      hover.setEnabled(true);
     },
 
     disable() {
       _enabled = false;
       if (_points) _points.show = false;
-      clearHover();
-      _pinnedId = null;
+      hover.setEnabled(false);
       overlayHost.clearSource(LMP_OVERLAY_SOURCE_ID);
-      overlayHost.clearSource(LMP_DETAIL_SOURCE_ID);
       overlayHost.setVisible(LMP_OVERLAY_SOURCE_ID, false);
-      overlayHost.setVisible(LMP_DETAIL_SOURCE_ID, false);
     },
 
     async update() {
@@ -559,7 +411,7 @@ export function createIsoLmpLayer({ overlayHost = DEFAULT_OVERLAY_HOST } = {}) {
               moving: false,
             },
           );
-          publishDetail();
+          hover.sync((id) => _drawn.get(id)?.record || null);
         }
 
         _count = _drawn.size;
@@ -583,13 +435,9 @@ export function createIsoLmpLayer({ overlayHost = DEFAULT_OVERLAY_HOST } = {}) {
 
     destroy(viewer) {
       _enabled = false;
-      clearHover();
-      _pinnedId = null;
-      removeInput();
+      hover.remove();
       overlayHost.clearSource(LMP_OVERLAY_SOURCE_ID);
-      overlayHost.clearSource(LMP_DETAIL_SOURCE_ID);
       overlayHost.setVisible(LMP_OVERLAY_SOURCE_ID, false);
-      overlayHost.setVisible(LMP_DETAIL_SOURCE_ID, false);
       const target = viewer || _viewer;
       if (_points) {
         try {
