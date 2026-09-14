@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   createTransmissionLinesLayer,
+  constraintCopy,
+  constraintColor,
+  constraintLegend,
+  createLineDetailEntry,
   lineCardCopy,
   lineParts,
   lineStyleForFeature,
@@ -34,7 +38,8 @@ test('layer module exposes the data-layer contract without loading', (t) => {
   });
   const layer = createTransmissionLinesLayer({ mapStackEventTarget: null });
   assert.equal(layer.id, 'eia-transmission-lines');
-  assert.equal(layer.updateInterval, 0);
+  assert.equal(layer.updateInterval, 300000);
+  assert.deepEqual(layer.getRowControls().legend[0].count, 0);
   for (const fn of [
     'init',
     'enable',
@@ -148,4 +153,45 @@ test('line card copy names the ends, owner and status, dropping unknowns', () =>
     { title: '345 kV · Wolf Creek', details: ['AC · Overhead'] },
   );
   assert.equal(lineCardCopy({}).title, '0 kV line');
+});
+
+test('a line carrying a binding constraint says so on the card, in the congestion colour', () => {
+  const spp = {
+    iso: 'spp',
+    name: 'VINHAYKNOXFR',
+    monitored: 'LN VINETAP3 - NHAYS',
+    shadowPrice: -1486.87,
+    state: 'BREACHED',
+  };
+  assert.equal(
+    constraintCopy(spp),
+    'Binding: VINHAYKNOXFR (LN VINETAP3 - NHAYS) · $1,487/MWh · Breached',
+  );
+  assert.equal(
+    constraintCopy({
+      iso: 'nyiso',
+      name: 'FARRAGUT 138 PLYMTHST 138 1',
+      shadowPrice: -12.4,
+    }),
+    'Limiting: FARRAGUT 138 PLYMTHST 138 1 · $12/MWh',
+  );
+  const record = {
+    id: 'line:1',
+    kv: 115,
+    sub_1: 'VINE TAP',
+    sub_2: 'NORTH HAYS',
+    constraint: spp,
+    position: { x: 1, y: 2, z: 3 },
+  };
+  const { details } = lineCardCopy(record);
+  assert.equal(details.at(-1), constraintCopy(spp));
+  assert.equal(constraintColor(spp), '#ff1744');
+  assert.notEqual(constraintColor({ shadowPrice: -20 }), '#ff1744');
+  assert.equal(createLineDetailEntry(record).accent, '#ff1744');
+  assert.equal(
+    createLineDetailEntry({ ...record, constraint: null }).accent,
+    '#9e9e9e',
+  );
+  assert.equal(constraintLegend({ matched: 3, total: 80 })[0].count, 3);
+  assert.match(constraintLegend({ matched: 3, total: 80 })[0].blurb, /3 of 80/);
 });

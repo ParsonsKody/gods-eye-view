@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseNyisoRealtimeTail,
+  parseNyisoLimitingConstraints,
   normalizeSppFeatures,
   mccColor,
   mccPixelSize,
@@ -106,8 +107,36 @@ test('SPP normalizer splits priced nodes from constraints and keeps the interval
   assert.equal(out.constraints[0].shadowPrice, 12.5);
 });
 
+test('NYISO limiting constraints parse to the latest interval with the cost as shadow price', () => {
+  const text = [
+    'Time Stamp,Time Zone,Limiting Facility,Facility PTID,Contingency,Constraint Cost($)',
+    '09/14/2026 10:10:00,EDT,OLD 115 OLDER 115 1,1,BASE CASE,-3.00',
+    '09/14/2026 10:15:00,EDT,FARRAGUT 138 PLYMTHST 138 1,25292, BASE CASE,-0.02',
+    '09/14/2026 10:15:00,EDT,"BUFALO78 115 HUNTLEY  115 1",25100,LINE X,-12.5',
+    '',
+  ].join('\n');
+  const rows = parseNyisoLimitingConstraints(text);
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows[0], {
+    id: 'nyiso:binding:25292',
+    name: 'FARRAGUT 138 PLYMTHST 138 1',
+    kind: 'binding',
+    ptid: '25292',
+    contingent: 'BASE CASE',
+    shadowPrice: -0.02,
+    monitored: 'FARRAGUT 138 PLYMTHST 138 1',
+    state: null,
+    interval: '09/14/2026 10:15:00',
+  });
+  assert.equal(rows[1].shadowPrice, -12.5);
+  assert.deepEqual(parseNyisoLimitingConstraints(''), []);
+  assert.deepEqual(parseNyisoLimitingConstraints('a,b\n1,2'), []);
+});
+
 test('congestion colour diverges and saturates; size and label follow MCC', () => {
   assert.equal(mccColor(0), MCC_NEUTRAL_COLOR);
+  assert.equal(mccColor(50, 50), MCC_POSITIVE_COLOR);
+  assert.notEqual(mccColor(50, 200), MCC_POSITIVE_COLOR);
   assert.equal(mccColor(NaN), MCC_NEUTRAL_COLOR);
   assert.equal(mccColor(50), MCC_POSITIVE_COLOR);
   assert.equal(mccColor(-50), MCC_NEGATIVE_COLOR);

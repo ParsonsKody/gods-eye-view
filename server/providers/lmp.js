@@ -3,6 +3,7 @@ import { promises as fsp } from 'node:fs';
 
 import {
   parseNyisoRealtimeTail,
+  parseNyisoLimitingConstraints,
   normalizeSppFeatures,
   normalizeNyisoRow,
 } from '../../src/data/lmpFeeds.js';
@@ -18,6 +19,8 @@ import {
  * NYISO upstream: mis.nyiso.com daily realtime_gen.csv (about 8 MB by day
  * end). Only the last NYISO_TAIL_BYTES are read via HTTP Range; the parser
  * keeps the last complete interval. Filenames use the Eastern calendar day.
+ * NYISO constraints come from currentLimitingConstraints.csv (tiny, no
+ * coordinates); a failure there leaves `constraints` empty, never the nodes.
  *
  * SPP upstream: pricecontourmap.spp.org ArcGIS layers 1 to 5 of
  * PCM/RTBM_Features (DC ties, hubs, interfaces, M2M and binding
@@ -34,6 +37,9 @@ export function lmpProxy() {
   const TTL_MS = 60_000;
   const NYISO_TAIL_BYTES = 262_144;
   const NYISO_MAX_BYTES = 2_097_152;
+  const NYISO_CONSTRAINTS_URL =
+    'https://mis.nyiso.com/public/csv/LimitingConstraints/currentLimitingConstraints.csv';
+  const NYISO_CONSTRAINTS_MAX_BYTES = 262_144;
   const SPP_MAX_BYTES = 2_097_152;
   const SPP_BASE =
     'https://pricecontourmap.spp.org/arcgis/rest/services/PCM/RTBM_Features/MapServer';
@@ -104,7 +110,25 @@ export function lmpProxy() {
     return parseNyisoRealtimeTail(text, { partialHead: res.status === 206 });
   }
 
+  async function fetchNyisoConstraints() {
+    try {
+      const res = await fetch(NYISO_CONSTRAINTS_URL, {
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return parseNyisoLimitingConstraints(
+        await readCapped(res, NYISO_CONSTRAINTS_MAX_BYTES),
+      );
+    } catch (err) {
+      console.warn(
+        `[lmp-proxy] NYISO constraints unavailable (${err?.message || err})`,
+      );
+      return [];
+    }
+  }
+
   async function refreshNyiso() {
+    const constraintsPromise = fetchNyisoConstraints();
     for (const daysBack of [0, 1]) {
       const stamp = nyisoDayStamp(daysBack);
       let parsed = await fetchNyisoDay(stamp, NYISO_TAIL_BYTES);
@@ -126,7 +150,7 @@ export function lmpProxy() {
           mlc: r.mlc,
           mec: r.mec,
         })),
-        constraints: [],
+        constraints: await constraintsPromise,
       };
     }
     throw new Error('NYISO real-time file unavailable');

@@ -8,6 +8,8 @@ import {
   cableClassificationTypeForScene,
   cableClassificationTypeForStack,
 } from './telegeographySubmarineCables.js';
+import { matchConstraintsToLines } from './constraintLines.js';
+import { mccColor, MCC_POSITIVE_COLOR } from './lmpFeeds.js';
 
 /**
  * US transmission lines from the EIA Atlas archive of the HIFLD dataset
@@ -25,6 +27,13 @@ import {
  * way the submarine-cable layer does. Each instance carries its line record
  * as the pick id, so hovering a line shows a card (kV, substations, owner,
  * status) and clicking pins it.
+ *
+ * Congestion: every 5 minutes the layer reads the binding constraints the
+ * /api/lmp proxy already serves (SPP and NYISO), matches them to lines
+ * (constraintLines.js) and draws the matched lines again, wider, in the
+ * LMP congestion gradient by shadow price. The card of such a line names
+ * the constraint. No public feed gives MW on individual lines, so this
+ * marks where a constraint binds, not measured loading.
  */
 
 const backboneUrl = new URL(
@@ -35,6 +44,8 @@ const regionalUrl = new URL(
   './local_data/eia_transmission_lines/lines_regional.geojson',
   import.meta.url,
 ).href;
+const LMP_API_URL = '/api/lmp';
+const CONSTRAINT_ISOS = ['spp', 'nyiso'];
 
 /** Camera height (m) below which the regional 100 to 230 kV set is shown. */
 export const REGIONAL_MAX_CAMERA_HEIGHT_M = 1800000;
@@ -50,6 +61,9 @@ export const LINE_STYLE_BY_KV = Object.freeze([
 export const DC_LINE_COLOR = '#40c4ff';
 const LINE_ALPHA = 0.9;
 export const LINE_DETAIL_SOURCE_ID = 'eia-transmission-lines-detail';
+/** |shadow price| in $/MWh at which the congested-line colour saturates. */
+export const CONSTRAINT_SATURATION = 200;
+const CONGESTED_EXTRA_WIDTH = 3;
 /** HIFLD placeholders: "NOT AVAILABLE" and synthetic "UNKNOWN119979" nodes. */
 const NOT_AVAILABLE = /^(not available|unknown\d*)$/i;
 
@@ -78,9 +92,41 @@ function known(value) {
   return text && !NOT_AVAILABLE.test(text) ? text : '';
 }
 
+/** Congestion gradient colour for a constraint, by |shadow price|. */
+export function constraintColor(constraint) {
+  return mccColor(
+    Math.abs(Number(constraint?.shadowPrice) || 0),
+    CONSTRAINT_SATURATION,
+  );
+}
+
+/**
+ * Card line for the constraint binding on a line.
+ * @param {object} constraint `{iso, name, monitored, shadowPrice, state}`.
+ * @returns {string}
+ */
+export function constraintCopy(constraint) {
+  const price = Math.abs(Number(constraint?.shadowPrice) || 0);
+  const dollars = `$${Math.round(price).toLocaleString('en-US')}/MWh`;
+  if (constraint?.iso === 'nyiso') {
+    return `Limiting: ${constraint.name} · ${dollars}`;
+  }
+  const facility =
+    constraint?.monitored && constraint.monitored !== constraint.name
+      ? ` (${constraint.monitored})`
+      : '';
+  return [
+    `Binding: ${constraint?.name || '?'}${facility}`,
+    dollars,
+    constraint?.state ? sentenceCase(constraint.state) : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
 /**
  * Card copy for one line record.
- * @param {object} record `{kv, type, status, owner, sub_1, sub_2}`.
+ * @param {object} record `{kv, type, status, owner, sub_1, sub_2, constraint?}`.
  * @returns {{title:string, details:string[]}}
  */
 export function lineCardCopy(record) {
@@ -103,6 +149,7 @@ export function lineCardCopy(record) {
     sentenceCase(known(record?.status)),
   ].filter(Boolean);
   if (facts.length) details.push(facts.join(' · '));
+  if (record?.constraint) details.push(constraintCopy(record.constraint));
   return { title, details };
 }
 
@@ -119,7 +166,9 @@ export function createLineDetailEntry(record, { pinned = false } = {}) {
     position: record.position,
     title,
     details,
-    accent: lineStyleForFeature(record).color,
+    accent: record.constraint
+      ? constraintColor(record.constraint)
+      : lineStyleForFeature(record).color,
     pinned,
   });
 }
@@ -175,6 +224,24 @@ export function lineParts(collection) {
 }
 
 /**
+ * Legend row for the panel: how many constraints landed on a line.
+ * @param {{matched:number,total:number}} stats
+ * @returns {Array<{color:string,label:string,count:number,blurb:string}>}
+ */
+export function constraintLegend(stats) {
+  const matched = stats?.matched || 0;
+  const total = stats?.total || 0;
+  return [
+    {
+      color: MCC_POSITIVE_COLOR,
+      label: 'binding constraints on lines',
+      count: matched,
+      blurb: `${matched} of ${total} live SPP and NYISO constraints placed on a line; colour saturates at $${CONSTRAINT_SATURATION}/MWh shadow price`,
+    },
+  ];
+}
+
+/**
  * Build the transmission-lines layer module.
  * @param {object} [options]
  * @param {EventTarget|null} [options.mapStackEventTarget] Basemap switch source.
@@ -188,9 +255,11 @@ export function createTransmissionLinesLayer({
   let _enabled = false;
   let _error = null;
   let _lastUpdate = null;
-  /** @type {{primitive:Cesium.GroundPolylinePrimitive, features:number}|null} */
+  /** @type {{primitive:Cesium.GroundPolylinePrimitive, features:number, parts:object[]}|null} */
   let _backbone = null;
   let _regional = null;
+  /** @type {{primitive:Cesium.GroundPolylinePrimitive}|null} Matched lines, redrawn wider. */
+  let _congested = null;
   let _loading = null;
   let _regionalLoading = null;
   /** Ownership token: destroy bumps it so in-flight loads discard themselves. */
@@ -198,6 +267,12 @@ export function createTransmissionLinesLayer({
   let _classification = Cesium.ClassificationType.BOTH;
   let _mapStackListener = null;
   let _moveEndRemover = null;
+  /** @type {object[]} Latest constraints from the LMP proxy, tagged with `iso`. */
+  let _constraints = [];
+  let _matchStats = { matched: 0, total: 0 };
+  /** @type {Set<object>} Records currently carrying a `constraint`. */
+  let _matchedRecords = new Set();
+  let _rowControlsListener = null;
 
   function buildPrimitive(collection) {
     const { features, parts } = lineParts(collection);
@@ -225,7 +300,7 @@ export function createTransmissionLinesLayer({
       classificationType: _classification,
       allowPicking: true,
     });
-    return { primitive, features };
+    return { primitive, features, parts };
   }
 
   /** Our line record from a pick, anchored at the ground point under the cursor. */
@@ -235,7 +310,8 @@ export function createTransmissionLinesLayer({
       return null;
     if (
       picked.primitive !== _backbone?.primitive &&
-      picked.primitive !== _regional?.primitive
+      picked.primitive !== _regional?.primitive &&
+      picked.primitive !== _congested?.primitive
     )
       return null;
     const position = _viewer?.camera?.pickEllipsoid(windowPosition);
@@ -269,7 +345,7 @@ export function createTransmissionLinesLayer({
   function applyClassification(next) {
     if (next === undefined || next === _classification) return;
     _classification = next;
-    for (const set of [_backbone, _regional]) {
+    for (const set of [_backbone, _regional, _congested]) {
       if (set) set.primitive.classificationType = next;
     }
     _viewer?.scene?.requestRender?.();
@@ -290,6 +366,7 @@ export function createTransmissionLinesLayer({
           if (!set || !_viewer || generation !== _generation) return;
           _regional = set;
           set.primitive.show = _enabled && regionalWanted();
+          rematch();
         })
         .catch((err) => {
           _error = err?.message || String(err);
@@ -318,13 +395,80 @@ export function createTransmissionLinesLayer({
     }
   }
 
+  /**
+   * Match the latest constraints to the loaded parts and redraw the
+   * congested set (teardown and rebuild: the base sets share one colour
+   * attribute per voltage band, so they cannot be recoloured per line).
+   */
+  function rematch() {
+    const parts = [...(_backbone?.parts || []), ...(_regional?.parts || [])];
+    const { byRecord, matched, total } = matchConstraintsToLines(
+      _constraints,
+      parts,
+    );
+    for (const record of _matchedRecords) delete record.constraint;
+    _matchedRecords = new Set();
+    for (const [record, constraint] of byRecord) {
+      record.constraint = constraint;
+      _matchedRecords.add(record);
+    }
+    _matchStats = { matched, total };
+    removeSet(_congested);
+    _congested = null;
+    const scene = _viewer?.scene;
+    if (scene && byRecord.size) {
+      const instances = [];
+      for (const part of parts) {
+        const constraint = byRecord.get(part.record);
+        if (!constraint) continue;
+        instances.push(
+          new Cesium.GeometryInstance({
+            id: part.record,
+            geometry: new Cesium.GroundPolylineGeometry({
+              positions: Cesium.Cartesian3.fromDegreesArray(
+                part.positions.flat(),
+              ),
+              width: part.width + CONGESTED_EXTRA_WIDTH,
+            }),
+            attributes: {
+              color: Cesium.ColorGeometryInstanceAttribute.fromColor(
+                Cesium.Color.fromCssColorString(constraintColor(constraint)),
+              ),
+            },
+          }),
+        );
+      }
+      const primitive = new Cesium.GroundPolylinePrimitive({
+        geometryInstances: instances,
+        appearance: new Cesium.PolylineColorAppearance(),
+        classificationType: _classification,
+        allowPicking: true,
+      });
+      primitive.show = _enabled;
+      scene.groundPrimitives.add(primitive);
+      _congested = { primitive };
+    }
+    // A hovered or pinned card is a copy of its record; refresh it so the
+    // constraint line appears or disappears with the feed.
+    const byId = new Map(parts.map((part) => [part.record.id, part.record]));
+    hover.sync((id) => {
+      const current =
+        hover.pinned()?.id === id ? hover.pinned() : hover.hovered();
+      const record = byId.get(id);
+      return current && record
+        ? { ...record, position: current.position }
+        : current || null;
+    });
+    _rowControlsListener?.();
+    scene?.requestRender?.();
+  }
+
   return {
     id: 'eia-transmission-lines',
     name: 'Transmission Lines',
     icon: '⌇',
-    source: 'EIA / HIFLD 2024',
-    updateInterval: 0,
-    statsRefreshInterval: 1000,
+    source: 'EIA / HIFLD 2024 · constraints 5 min',
+    updateInterval: 300000,
 
     init(viewer) {
       _viewer = viewer;
@@ -362,6 +506,7 @@ export function createTransmissionLinesLayer({
             set.primitive.show = _enabled;
             _lastUpdate = Date.now();
             _error = null;
+            rematch();
           })
           .catch((err) => {
             _error = err?.message || String(err);
@@ -378,6 +523,7 @@ export function createTransmissionLinesLayer({
         _viewer?.scene?.requestRender?.();
       });
       if (_backbone) _backbone.primitive.show = _enabled;
+      if (_congested) _congested.primitive.show = _enabled;
       updateRegionalVisibility();
       _viewer?.scene?.requestRender?.();
     },
@@ -387,12 +533,38 @@ export function createTransmissionLinesLayer({
       hover.setEnabled(false);
       if (_backbone) _backbone.primitive.show = false;
       if (_regional) _regional.primitive.show = false;
+      if (_congested) _congested.primitive.show = false;
       _viewer?.scene?.requestRender?.();
     },
 
-    // Static bundle: nothing to poll. Returning false would tell the manager
-    // the enable was rejected.
-    update() {
+    /**
+     * Refresh the binding constraints (the line bundle itself is static).
+     * A feed failure keeps the last congested set; the enable is never
+     * rejected for it, so this always returns true.
+     */
+    async update() {
+      const results = await Promise.allSettled(
+        CONSTRAINT_ISOS.map(async (iso) => {
+          const response = await fetch(`${LMP_API_URL}?iso=${iso}`);
+          if (!response.ok) throw new Error(`${iso} HTTP ${response.status}`);
+          const payload = await response.json();
+          // Activated constraints with a zero shadow price are not binding;
+          // highlighting them would only add grey clutter.
+          return (payload?.constraints || [])
+            .filter((c) => Number(c?.shadowPrice))
+            .map((c) => ({ ...c, iso: payload.iso || iso }));
+        }),
+      );
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      if (fulfilled.length) {
+        _constraints = fulfilled.flatMap((r) => r.value);
+        rematch();
+      } else {
+        console.warn(
+          '[Data:Transmission] constraint feed failed:',
+          results.map((r) => r.reason?.message || r.reason).join('; '),
+        );
+      }
       return true;
     },
 
@@ -402,8 +574,13 @@ export function createTransmissionLinesLayer({
       hover.remove();
       removeSet(_backbone);
       removeSet(_regional);
+      removeSet(_congested);
       _backbone = null;
       _regional = null;
+      _congested = null;
+      _constraints = [];
+      _matchStats = { matched: 0, total: 0 };
+      _matchedRecords = new Set();
       _enabled = false;
       if (_moveEndRemover) {
         _moveEndRemover();
@@ -417,6 +594,14 @@ export function createTransmissionLinesLayer({
         _mapStackListener = null;
       }
       _viewer = null;
+    },
+
+    getRowControls() {
+      return { chips: [], legend: constraintLegend(_matchStats) };
+    },
+
+    setRowControlsListener(listener) {
+      _rowControlsListener = typeof listener === 'function' ? listener : null;
     },
 
     getStats() {

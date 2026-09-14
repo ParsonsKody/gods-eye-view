@@ -84,6 +84,57 @@ export function parseNyisoRealtimeTail(text, { partialHead = true } = {}) {
   return { interval, rows: groups.get(interval) };
 }
 
+/**
+ * Parse NYISO's limiting constraints CSV (current or day file) and keep the
+ * rows of the latest timestamp. Columns: Time Stamp, Time Zone, Limiting
+ * Facility, Facility PTID, Contingency, Constraint Cost($). The cost is
+ * NYISO's (negative) shadow price. No coordinates come with it.
+ * @param {string} text
+ * @returns {Array<{id:string,name:string,kind:'binding',ptid:string,contingent:string|null,shadowPrice:number,monitored:string,state:null,interval:string}>}
+ */
+export function parseNyisoLimitingConstraints(text) {
+  const lines = String(text || '').split(/\r?\n/);
+  const header = splitCsvLine(lines.shift() || '').map((h) =>
+    h.trim().toLowerCase(),
+  );
+  const col = (needle) => header.findIndex((h) => h.startsWith(needle));
+  const iStamp = col('time stamp');
+  const iName = col('limiting facility');
+  const iPtid = col('facility ptid');
+  const iCont = col('contingency');
+  const iCost = col('constraint cost');
+  if ([iStamp, iName, iCost].some((i) => i < 0)) return [];
+  const byStamp = new Map();
+  const order = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    const cols = splitCsvLine(line);
+    const stamp = String(cols[iStamp] || '').trim();
+    const name = String(cols[iName] || '').trim();
+    const cost = Number(cols[iCost]);
+    if (!stamp || !name || !Number.isFinite(cost)) continue;
+    if (!byStamp.has(stamp)) {
+      byStamp.set(stamp, []);
+      order.push(stamp);
+    }
+    const ptid = String(cols[iPtid] ?? '').trim();
+    byStamp.get(stamp).push({
+      id: `nyiso:binding:${ptid || name}`,
+      name,
+      kind: 'binding',
+      ptid,
+      contingent: String(cols[iCont] ?? '').trim() || null,
+      shadowPrice: cost,
+      monitored: name,
+      state: null,
+      interval: stamp,
+    });
+  }
+  if (!order.length) return [];
+  return byStamp.get(order[order.length - 1]);
+}
+
 const SPP_NODE_KINDS = Object.freeze({ 1: 'dc-tie', 2: 'hub', 3: 'interface' });
 const SPP_CONSTRAINT_KINDS = Object.freeze({ 4: 'm2m', 5: 'binding' });
 
@@ -165,12 +216,13 @@ function rgbToHex([r, g, b]) {
 /**
  * Diverging colour for a marginal congestion component.
  * @param {number} mcc $/MWh, negative or positive.
+ * @param {number} [saturation=MCC_SATURATION] |value| at which the colour saturates.
  * @returns {string} CSS hex colour.
  */
-export function mccColor(mcc) {
+export function mccColor(mcc, saturation = MCC_SATURATION) {
   const v = Number(mcc);
   if (!Number.isFinite(v) || v === 0) return MCC_NEUTRAL_COLOR;
-  const t = Math.min(1, Math.abs(v) / MCC_SATURATION);
+  const t = Math.min(1, Math.abs(v) / saturation);
   const from = hexToRgb(MCC_NEUTRAL_COLOR);
   const to = hexToRgb(v < 0 ? MCC_NEGATIVE_COLOR : MCC_POSITIVE_COLOR);
   return rgbToHex(from.map((c, i) => c + (to[i] - c) * t));
