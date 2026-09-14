@@ -419,6 +419,11 @@ export function normalizeOverlayEntry(sourceId, entry) {
     variant,
     title: String(entry.title ?? ''),
     details: Array.isArray(entry.details) ? entry.details.map((line) => String(line)) : [],
+    // Optional two-column table under the details (card and selected
+    // variants only): dim label left, bold value in one aligned column.
+    rows: Array.isArray(entry.rows)
+      ? entry.rows.map((row) => [String(row?.[0] ?? ''), String(row?.[1] ?? '')])
+      : [],
     accent: entry.accent || WORLD_OVERLAY_STYLE.accent,
     paintLane: entry.paintLane,
     priority: Number.isFinite(Number(entry.priority)) ? Number(entry.priority) : 0,

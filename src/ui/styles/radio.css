@@ -800,3 +800,35 @@
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18);
   flex: none;
 }
+
+/* List legend: a heading over one glyph-and-label row per class, the
+   Yes Energy fuel-type panel. The glyph takes the class colour through
+   currentColor so it matches the dot on the map. */
+.data-toggle-controls--list {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+
+.data-toggle-legend-heading {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 2px;
+}
+
+.data-toggle-controls--list .data-toggle-legend-item {
+  gap: 7px;
+  font-size: 10px;
+  letter-spacing: 0.3px;
+  color: var(--text-secondary);
+}
+
+.data-toggle-legend-icon {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+  flex: none;
+}

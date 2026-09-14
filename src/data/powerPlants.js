@@ -9,6 +9,7 @@ import {
   selectLocalInfrastructureOverlayCohort,
 } from './localGeojsonCore.js';
 import { shouldRecomputeInfraLod } from './localGeojsonLod.js';
+import { POWER_PLANT_FUEL_ICONS } from './powerPlantIcons.js';
 
 /**
  * US power plants (EIA-860 / 860M, bundled by tools/energy/fetch_plants.py).
@@ -18,10 +19,11 @@ import { shouldRecomputeInfraLod } from './localGeojsonLod.js';
  * transmission lines. All 13K dots are always drawn (a cheap pre-render
  * occluder walk hides the far side of the globe); only the ambient cards
  * are budgeted, through the same grid cohort the other local layers use.
- * Hovering a dot shows the detail card, clicking pins it. The card also
- * carries a capacity factor from the EIA-923 sidecar
- * (capacity_factors.json, tools/energy/fetch_capacity_factors.py) for the
- * plants on EIA's monthly survey.
+ * Hovering a dot shows the detail card (title plus a label and value
+ * table), clicking pins it. The table also carries a capacity factor from
+ * the EIA-923 sidecar (capacity_factors.json,
+ * tools/energy/fetch_capacity_factors.py) for the plants on EIA's monthly
+ * survey.
  */
 
 const plantsUrl = new URL(
@@ -59,19 +61,27 @@ export const POWER_PLANT_FUEL_COLORS = Object.freeze({
   other: '#9e9e9e',
 });
 
-/** Legend wording per fuel key, in display order. */
+/** Legend wording per fuel key, in display order (short label, tooltip). */
 export const POWER_PLANT_FUEL_LABELS = Object.freeze({
-  gas: 'natural gas',
   coal: 'coal',
   nuclear: 'nuclear',
+  gas: 'gas',
+  hydro: 'hydro',
   wind: 'wind',
   solar: 'solar',
+  oil: 'oil',
+  storage: 'storage',
+  biomass: 'biomass',
+  geothermal: 'geothermal',
+  other: 'other',
+});
+
+const POWER_PLANT_FUEL_BLURBS = Object.freeze({
+  gas: 'natural gas',
   hydro: 'hydro and pumped storage',
   storage: 'battery storage',
   oil: 'petroleum',
-  geothermal: 'geothermal',
   biomass: 'biomass and landfill gas',
-  other: 'other',
 });
 
 /**
@@ -181,13 +191,14 @@ function periodText(period) {
 }
 
 /**
- * Card line for a plant's capacity factor, or null when the sidecar has
- * no row for it. Negative net generation (station service only) reads 0%.
+ * A plant's capacity factor over the sidecar period, or null when the
+ * sidecar has no row for it. Negative net generation (station service
+ * only) reads 0%.
  * @param {object} record `{total_mw, genMwh}`.
  * @param {{period:string, hours:number}|null} meta
- * @returns {string|null}
+ * @returns {{pct:string, energy:string, period:string}|null}
  */
-export function capacityFactorLine(record, meta) {
+export function capacityFactor(record, meta) {
   const mwh = Number(record?.genMwh);
   const mw = Number(record?.total_mw);
   const hours = Number(meta?.hours);
@@ -198,7 +209,17 @@ export function capacityFactorLine(record, meta) {
     gwh >= 10
       ? `${Math.round(gwh).toLocaleString('en-US')} GWh`
       : `${gwh.toFixed(1)} GWh`;
-  return `CF ${Math.round(cf * 100)}% · ${energy} ${periodText(meta.period)}`;
+  return {
+    pct: `${Math.round(cf * 100)}%`,
+    energy,
+    period: periodText(meta.period),
+  };
+}
+
+/** One-line form of {@link capacityFactor}: `CF 33% · 796 GWh Jan to Jun 2026`. */
+export function capacityFactorLine(record, meta) {
+  const cf = capacityFactor(record, meta);
+  return cf ? `CF ${cf.pct} · ${cf.energy} ${cf.period}` : null;
 }
 
 function mwText(mw) {
@@ -208,13 +229,41 @@ function mwText(mw) {
     : '';
 }
 
+function techText(record) {
+  return record?.tech?.replace(/;\s*$/, '').replace(/;\s*/g, ' · ') || '';
+}
+
 /**
- * Card copy for one plant. The first detail line is what the ambient card
- * shows; the hover card adds the technology, the EIA id and, when the
- * EIA-923 sidecar has the plant, its capacity factor.
+ * Label and value table for the hover and pinned card (the Yes Energy
+ * generator card shape). Rows without a value are left out; the CF and
+ * Generation rows need the EIA-923 sidecar.
  * @param {object} record
  * @param {{period:string, hours:number}|null} [cfMeta]
- * @returns {{title:string, details:string[]}}
+ * @returns {Array<[string, string]>}
+ */
+export function plantCardRows(record, cfMeta = null) {
+  const cf = capacityFactor(record, cfMeta);
+  // One technology per row (a blank label continues the Tech row) so a
+  // multi-technology plant does not stretch the card.
+  const techs = techText(record).split(' · ');
+  return [
+    ['Capacity', mwText(record?.total_mw)],
+    ['Fuel', record?.prim_source || record?.fuel || ''],
+    ...techs.map((tech, i) => [i === 0 ? 'Tech' : '', tech]),
+    ['CF', cf ? `${cf.pct} · ${cf.period}` : ''],
+    ['Generation', cf ? cf.energy : ''],
+    ['Utility', record?.utility || ''],
+    ['State', record?.state || ''],
+    ['EIA id', record?.plant_code ? String(record.plant_code) : ''],
+  ].filter(([, value]) => value);
+}
+
+/**
+ * Card copy for one plant. The first detail line is what the ambient card
+ * shows (fuel, MW, utility); `rows` is the table the hover card draws.
+ * @param {object} record
+ * @param {{period:string, hours:number}|null} [cfMeta]
+ * @returns {{title:string, details:string[], rows:Array<[string, string]>}}
  */
 export function plantCardCopy(record, cfMeta = null) {
   const title = record?.name || 'Power plant';
@@ -226,13 +275,16 @@ export function plantCardCopy(record, cfMeta = null) {
     .filter(Boolean)
     .join(' · ');
   const tech = [
-    record?.tech?.replace(/;\s*$/, '').replace(/;\s*/g, ' · '),
+    techText(record),
     record?.plant_code ? `EIA ${record.plant_code}` : '',
   ]
     .filter(Boolean)
     .join(' · ');
-  const cf = capacityFactorLine(record, cfMeta);
-  return { title, details: [summary, tech, cf].filter(Boolean) };
+  return {
+    title,
+    details: [summary, tech].filter(Boolean),
+    rows: plantCardRows(record, cfMeta),
+  };
 }
 
 /**
@@ -272,30 +324,33 @@ export function createPlantOverlayEntry(record) {
 }
 
 /**
- * Hover (card) or pinned (selected) detail entry.
+ * Hover (card) or pinned (selected) detail entry: the title over the
+ * label and value table.
  * @param {object} record Record with `position`.
- * @param {{pinned?:boolean}} [options]
+ * @param {{pinned?:boolean, cfMeta?:object|null}} [options]
  * @returns {object}
  */
 export function createPlantDetailEntry(
   record,
   { pinned = false, cfMeta = null } = {},
 ) {
-  const { title, details } = plantCardCopy(record, cfMeta);
+  const { title, rows } = plantCardCopy(record, cfMeta);
   return createHoverCardEntry({
     id: record.id,
     position: record.position,
     title,
-    details,
+    details: [],
+    rows,
     accent: powerPlantStyle(record).color,
     pinned,
   });
 }
 
 /**
- * Legend rows: one per fuel with its colour and site count.
+ * Legend rows: one per fuel with its colour, glyph and site count, in the
+ * Yes Energy order.
  * @param {object[]} records
- * @returns {Array<{color:string,label:string,count:number,blurb:string}>}
+ * @returns {Array<{color:string,icon:string,label:string,count:number,blurb:string}>}
  */
 export function plantLegend(records) {
   const counts = {};
@@ -307,9 +362,15 @@ export function plantLegend(records) {
     .filter((key) => counts[key])
     .map((key) => ({
       color: POWER_PLANT_FUEL_COLORS[key],
+      icon: POWER_PLANT_FUEL_ICONS[key],
       label: POWER_PLANT_FUEL_LABELS[key],
       count: counts[key],
-      blurb: 'EIA primary energy source; dot size follows nameplate MW',
+      blurb: [
+        POWER_PLANT_FUEL_BLURBS[key],
+        'EIA primary energy source; dot size follows nameplate MW',
+      ]
+        .filter(Boolean)
+        .join(' · '),
     }));
 }
 
@@ -584,7 +645,12 @@ export function createPowerPlantsLayer({
     },
 
     getRowControls() {
-      return { chips: [], legend: _legend };
+      return {
+        chips: [],
+        legend: _legend,
+        legendHeading: 'Fuel type',
+        legendLayout: 'list',
+      };
     },
 
     setRowControlsListener(listener) {

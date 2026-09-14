@@ -20,6 +20,7 @@ export const WORLD_OVERLAY_STYLE = Object.freeze({
   fontTrack: '600 10px "JetBrains Mono", monospace',
   fontTitle: '600 12px "JetBrains Mono", monospace',
   fontDetail: '500 10.5px "JetBrains Mono", monospace',
+  fontRowValue: '600 10.5px "JetBrains Mono", monospace',
   fontSelected: '600 13px "JetBrains Mono", monospace',
   fontTrackedTitle: '600 13px "JetBrains Mono", monospace',
   fontTrackedDetail: '500 11px "JetBrains Mono", monospace',

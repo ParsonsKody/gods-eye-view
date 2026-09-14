@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import {
   capacityFactorLine,
   createPlantDetailEntry,
+  plantCardRows,
   createPlantOverlayEntry,
   isPlantPickId,
   parseCapacityFactors,
@@ -65,12 +66,20 @@ test('the bundle parses to one record per plant, small sites included', () => {
   assert.equal(isPlantPickId('nyiso:1'), false);
 });
 
-test('card copy: ambient card keeps the summary, hover card adds tech and EIA id', () => {
+test('card copy: ambient card keeps the summary, hover card is a label and value table', () => {
   assert.deepEqual(plantCardCopy(JAMES_RIVER), {
     title: 'James River Power Station',
     details: [
       'natural gas · 155 MW · City Utilities of Springfield - (MO)',
       'Natural Gas Fired Combustion Turbine · EIA 2161',
+    ],
+    rows: [
+      ['Capacity', '155 MW'],
+      ['Fuel', 'natural gas'],
+      ['Tech', 'Natural Gas Fired Combustion Turbine'],
+      ['Utility', 'City Utilities of Springfield - (MO)'],
+      ['State', 'Missouri'],
+      ['EIA id', '2161'],
     ],
   });
   const multi = plantCardCopy({
@@ -81,6 +90,10 @@ test('card copy: ambient card keeps the summary, hover card adds tech and EIA id
     multi.details[1],
     'Conventional Steam Coal · Natural Gas Fired Combustion Turbine · EIA 2161',
   );
+  assert.deepEqual(multi.rows.slice(2, 4), [
+    ['Tech', 'Conventional Steam Coal'],
+    ['', 'Natural Gas Fired Combustion Turbine'],
+  ]);
   const record = {
     ...JAMES_RIVER,
     id: 'plant:2161',
@@ -94,7 +107,9 @@ test('card copy: ambient card keeps the summary, hover card adds tech and EIA id
   const pinned = createPlantDetailEntry(record, { pinned: true });
   assert.equal(pinned.variant, 'selected');
   assert.equal(pinned.accent, POWER_PLANT_FUEL_COLORS.gas);
-  assert.equal(pinned.details.length, 2);
+  assert.deepEqual(pinned.details, []);
+  assert.equal(pinned.rows.length, 6);
+  assert.deepEqual(plantCardRows({ name: 'Bare' }), []);
 });
 
 test('capacity factor joins the EIA-923 sidecar by plant code onto the hover card only', () => {
@@ -130,22 +145,30 @@ test('capacity factor joins the EIA-923 sidecar by plant code onto the hover car
   assert.equal(capacityFactorLine(JAMES_RIVER, meta), null);
   assert.equal(capacityFactorLine(record, null), null);
   assert.equal(
-    capacityFactorLine({ total_mw: 10, genMwh: 5000 }, { period: '2025-11 to 2026-02', hours: 2880 }),
+    capacityFactorLine(
+      { total_mw: 10, genMwh: 5000 },
+      { period: '2025-11 to 2026-02', hours: 2880 },
+    ),
     'CF 17% · 5.0 GWh Nov 2025 to Feb 2026',
   );
 
-  assert.deepEqual(plantCardCopy(record, meta).details, [
-    'natural gas · 155 MW · City Utilities of Springfield - (MO)',
-    'Natural Gas Fired Combustion Turbine · EIA 2161',
-    'CF 6% · 38 GWh Jan to Jun 2026',
+  assert.deepEqual(plantCardRows(record, meta).slice(2, 5), [
+    ['Tech', 'Natural Gas Fired Combustion Turbine'],
+    ['CF', '6% · Jan to Jun 2026'],
+    ['Generation', '38 GWh'],
   ]);
-  assert.equal(plantCardCopy(record).details.length, 2);
+  assert.deepEqual(
+    plantCardRows(record).map(([label]) => label),
+    ['Capacity', 'Fuel', 'Tech', 'Utility', 'State', 'EIA id'],
+  );
+  assert.equal(plantCardCopy(record, meta).details.length, 2);
   const drawn = { ...record, id: 'plant:2161', position: { x: 1, y: 2, z: 3 } };
   assert.equal(createPlantOverlayEntry(drawn).details.length, 1);
-  assert.equal(createPlantDetailEntry(drawn, { cfMeta: meta }).details.length, 3);
+  assert.equal(createPlantOverlayEntry(drawn).rows, undefined);
+  assert.equal(createPlantDetailEntry(drawn, { cfMeta: meta }).rows.length, 8);
 });
 
-test('legend counts sites per fuel in display order', () => {
+test('legend counts sites per fuel in the Yes Energy order with a glyph each', () => {
   const legend = plantLegend([
     { fuel: 'solar' },
     { fuel: 'wind' },
@@ -161,4 +184,27 @@ test('legend counts sites per fuel in display order', () => {
     ],
   );
   assert.equal(legend[1].color, POWER_PLANT_FUEL_COLORS.solar);
+  const all = plantLegend(
+    Object.keys(POWER_PLANT_FUEL_COLORS).map((fuel) => ({ fuel })),
+  );
+  assert.deepEqual(
+    all.map((l) => l.label),
+    [
+      'coal',
+      'nuclear',
+      'gas',
+      'hydro',
+      'wind',
+      'solar',
+      'oil',
+      'storage',
+      'biomass',
+      'geothermal',
+      'other',
+    ],
+  );
+  for (const item of all) {
+    assert.match(item.icon, /^M[\d.\s\-a-zA-Z,]+z$/, item.label);
+  }
+  assert.equal(all[2].blurb.startsWith('natural gas · '), true);
 });

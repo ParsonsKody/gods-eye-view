@@ -10,6 +10,8 @@ import { WORLD_OVERLAY_STYLE } from './worldOverlayTokens.js';
 // Two high-cardinality infrastructure sources share this cache; 1024 avoids
 // repeated O(n) eviction scans while keeping host-lifetime retention bounded.
 const TEXT_MEASURE_CACHE_LIMIT = 1024;
+/** Gap between the label and value columns of a card's `rows` table. */
+export const CARD_ROW_GAP = 14;
 const _textMeasureCache = new Map();
 let _textMeasureCacheSize = 0;
 // Recency is a monotonic integer stamp rather than a doubly linked list: a
@@ -270,6 +272,7 @@ function trackDisplayText(entry) {
 export function measureOverlayEntry(ctx, entry, out = {}) {
   const variant = entry?.selected ? 'selected' : String(entry?.variant || 'label');
   const details = Array.isArray(entry?.details) ? entry.details : [];
+  const rows = Array.isArray(entry?.rows) ? entry.rows : [];
   const selected = variant === 'selected';
   const tracked = variant === 'tracked';
   const tactical = entry?.cardStyle === 'tactical';
@@ -297,6 +300,21 @@ export function measureOverlayEntry(ctx, entry, out = {}) {
     );
   }
 
+  let rowLabelW = 0;
+  let rowValueW = 0;
+  for (let i = 0; i < rows.length; i++) {
+    rowLabelW = Math.max(
+      rowLabelW,
+      measureWorldOverlayText(ctx, rows[i][0], WORLD_OVERLAY_STYLE.fontDetail),
+    );
+    rowValueW = Math.max(
+      rowValueW,
+      measureWorldOverlayText(ctx, rows[i][1], WORLD_OVERLAY_STYLE.fontRowValue),
+    );
+  }
+  const rowsWidth = rows.length ? rowLabelW + CARD_ROW_GAP + rowValueW : 0;
+  out.rowLabelW = Math.ceil(rowLabelW);
+
   out.padX = tracked ? 13 : selected ? 12 : variant === 'label' || variant === 'track' ? 6 : 9;
   out.padY = tracked ? 9 : selected ? 8 : variant === 'label' || variant === 'track' ? 4 : 6;
   out.titleH = tactical
@@ -317,8 +335,8 @@ export function measureOverlayEntry(ctx, entry, out = {}) {
     out.w = out.thumbW + out.padX * 2;
     out.h = out.padY + out.thumbH + out.titleGap + out.titleH + out.padBottom;
   } else {
-    out.w = Math.ceil(Math.max(titleWidth, detailWidth)) + out.padX * 2;
-    out.h = out.padY * 2 + out.titleH + details.length * out.lineH;
+    out.w = Math.ceil(Math.max(titleWidth, detailWidth, rowsWidth)) + out.padX * 2;
+    out.h = out.padY * 2 + out.titleH + (details.length + rows.length) * out.lineH;
   }
   out.w = Math.max(8, out.w);
   out.h = Math.max(8, out.h);
@@ -490,6 +508,28 @@ function drawCardText(ctx, entry, placement, selected = false, topOffset = 0) {
   ctx.font = WORLD_OVERLAY_STYLE.fontDetail;
   for (let i = 0; i < details.length; i++) {
     ctx.fillText(String(details[i]), x, y);
+    y += selected ? 15 : 13;
+  }
+  const rows = Array.isArray(entry.rows) ? entry.rows : [];
+  if (!rows.length) return;
+  let labelW = entry._overlayLayout?.rowLabelW;
+  if (!Number.isFinite(labelW)) {
+    labelW = 0;
+    for (let i = 0; i < rows.length; i++) {
+      labelW = Math.max(
+        labelW,
+        measureWorldOverlayText(ctx, rows[i][0], WORLD_OVERLAY_STYLE.fontDetail),
+      );
+    }
+  }
+  const valueX = x + labelW + CARD_ROW_GAP;
+  for (let i = 0; i < rows.length; i++) {
+    ctx.fillStyle = WORLD_OVERLAY_STYLE.detail;
+    ctx.font = WORLD_OVERLAY_STYLE.fontDetail;
+    ctx.fillText(String(rows[i][0]), x, y);
+    ctx.fillStyle = WORLD_OVERLAY_STYLE.title;
+    ctx.font = WORLD_OVERLAY_STYLE.fontRowValue;
+    ctx.fillText(String(rows[i][1]), valueX, y);
     y += selected ? 15 : 13;
   }
 }

@@ -10,6 +10,7 @@ import {
   destroyWorldOverlayDraw,
   getWorldOverlayTextMeasureCacheSize,
   installWorldOverlayFontInvalidation,
+  CARD_ROW_GAP,
   measureOverlayEntry,
   measureWorldOverlayText,
   paintCard,
@@ -595,4 +596,40 @@ test('the sky plate scale is a whisper, not a second plate', () => {
     ...Object.values(DETECTION_THEME_MAP).map((theme) => alphaOf(theme.calloutPlate)),
   );
   assert.ok(lightest * SKY_PLATE_SCALE < 0.12, 'the feathered plate must read as bare text');
+});
+
+test('card rows measure as a two-column table and paint values in one aligned column', () => {
+  const ctx = mockContext();
+  const base = { title: 'John Twitty', details: [], accent: '#ff9f1c' };
+  const plain = measureOverlayEntry(ctx, { ...base, variant: 'card' }, {});
+  const rows = [['Capacity', '318 MW'], ['CF', '33% · Jan to Jun 2026']];
+  const entry = { ...base, variant: 'card', rows };
+  const layout = measureOverlayEntry(ctx, entry, {});
+  assert.equal(layout.h, plain.h + rows.length * layout.lineH);
+  assert.equal(layout.rowLabelW, 'Capacity'.length * 6);
+  assert.equal(
+    layout.w,
+    'Capacity'.length * 6 + CARD_ROW_GAP + '33% · Jan to Jun 2026'.length * 6 + layout.padX * 2,
+  );
+  entry._overlayLayout = layout;
+  const placement = placementVariants({
+    anchorX: 100,
+    anchorY: 200,
+    width: layout.w,
+    height: layout.h,
+    viewportWidth: 400,
+    viewportHeight: 300,
+  })[0];
+  paintCard(ctx, entry, placement, 1);
+  const texts = ctx.calls.filter(([name]) => name === 'fillText');
+  const byText = new Map(texts.map(([, text, x]) => [text, x]));
+  const labelX = byText.get('Capacity');
+  assert.equal(byText.get('CF'), labelX);
+  assert.equal(byText.get('318 MW'), labelX + 'Capacity'.length * 6 + CARD_ROW_GAP);
+  assert.equal(byText.get('33% · Jan to Jun 2026'), byText.get('318 MW'));
+  // An entry without rows is untouched.
+  const ctx2 = mockContext();
+  const noRows = { ...base, variant: 'card', details: ['LIVE'] };
+  noRows._overlayLayout = measureOverlayEntry(ctx2, noRows, {});
+  assert.equal(noRows._overlayLayout.h, plain.h + noRows._overlayLayout.lineH);
 });

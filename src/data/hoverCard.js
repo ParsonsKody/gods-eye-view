@@ -41,6 +41,8 @@ export const DEFAULT_OVERLAY_HOST = Object.freeze({
  * @param {Cesium.Cartesian3} input.position World anchor.
  * @param {string} input.title
  * @param {string[]} input.details
+ * @param {Array<[string, string]>} [input.rows] Label and value table
+ *   drawn under the details.
  * @param {string} input.accent CSS colour.
  * @param {boolean} [input.pinned]
  * @returns {object}
@@ -50,6 +52,7 @@ export function createHoverCardEntry({
   position,
   title,
   details,
+  rows = [],
   accent,
   pinned = false,
 }) {
@@ -65,6 +68,7 @@ export function createHoverCardEntry({
     zIndex: 40,
     title,
     details,
+    rows,
     accent,
     interactive: false,
     verticalOnly: true,

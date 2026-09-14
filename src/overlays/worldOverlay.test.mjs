@@ -995,6 +995,15 @@ test('entry normalization validates required fields and source lifecycle is stab
   assert.equal(normalized.horizonCull, true);
   assert.equal(normalized.accessibilityLabel, 'Focus fire detection 42');
   assert.equal(normalized.activate, activate);
+  assert.deepEqual(normalized.rows, []);
+  assert.deepEqual(
+    normalizeOverlayEntry('fires', {
+      id: 'b',
+      position: position(),
+      rows: [['Capacity', 318], ['Zone', null]],
+    }).rows,
+    [['Capacity', '318'], ['Zone', '']],
+  );
   assert.throws(() => normalizeOverlayEntry('', { id: 'a', position: position() }), /sourceId/);
   assert.throws(() => normalizeOverlayEntry('fires', { id: '', position: position() }), /entry.id/);
   assert.throws(() => normalizeOverlayEntry('fires', { id: 'a', position: null }), /position/);

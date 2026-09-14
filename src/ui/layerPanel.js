@@ -240,10 +240,18 @@ export class LayerPanel {
     const chips = controls?.chips || [];
     const legend = controls?.legend || [];
     container.hidden = chips.length === 0 && legend.length === 0;
+    // A `list` legend stacks one item per line under a heading (the fuel
+    // legend); the default wraps swatches inline.
+    container.classList.toggle(
+      'data-toggle-controls--list',
+      legend.length > 0 && controls?.legendLayout === 'list',
+    );
 
     for (const node of [...container.children]) {
+      const classes = String(node.className).split(/\s+/);
       if (
-        String(node.className).split(/\s+/).includes('data-toggle-legend-item')
+        classes.includes('data-toggle-legend-item') ||
+        classes.includes('data-toggle-legend-heading')
       )
         node.remove();
     }
@@ -272,13 +280,33 @@ export class LayerPanel {
     }
     for (const node of stale.values()) node.remove();
 
+    if (legend.length && controls?.legendHeading) {
+      const heading = document.createElement('span');
+      heading.className = 'data-toggle-legend-heading';
+      heading.textContent = controls.legendHeading;
+      container.appendChild(heading);
+    }
     for (const item of legend) {
       const entry = document.createElement('span');
       entry.className = 'data-toggle-legend-item';
       if (item.blurb) entry.title = item.blurb;
-      const swatch = document.createElement('span');
-      swatch.className = 'data-toggle-legend-swatch';
-      swatch.style.background = item.color;
+      let swatch;
+      if (item.icon) {
+        // Glyph legend: an inline SVG path tinted with the class colour.
+        const ns = 'http://www.w3.org/2000/svg';
+        swatch = document.createElementNS(ns, 'svg');
+        swatch.setAttribute('viewBox', '0 0 24 24');
+        swatch.setAttribute('aria-hidden', 'true');
+        swatch.setAttribute('class', 'data-toggle-legend-icon');
+        const path = document.createElementNS(ns, 'path');
+        path.setAttribute('d', item.icon);
+        swatch.appendChild(path);
+      } else {
+        swatch = document.createElement('span');
+        swatch.className = 'data-toggle-legend-swatch';
+        swatch.style.background = item.color;
+      }
+      swatch.style.color = item.color;
       const text = document.createElement('span');
       text.textContent = `${item.label} ${this._formatCount(item.count)}`;
       entry.append(swatch, text);
