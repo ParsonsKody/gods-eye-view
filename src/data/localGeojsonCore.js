@@ -85,19 +85,6 @@ export function localInfrastructureOverlayCopy(properties, layerId) {
     if (river && river.toLocaleLowerCase() !== title.toLocaleLowerCase()) {
       details.push(clampCardLine(river));
     }
-  } else if (layerId === 'local-power-plants') {
-    const fuel = firstClean([props.prim_source, props.fuel]);
-    const mw = Number(props.total_mw);
-    const line = [
-      fuel,
-      Number.isFinite(mw) && mw > 0
-        ? `${Math.round(mw).toLocaleString('en-US')} MW`
-        : '',
-      firstClean([props.utility]),
-    ]
-      .filter(Boolean)
-      .join(' · ');
-    if (line) details.push(clampCardLine(line));
   }
 
   return { title, details };
@@ -339,9 +326,6 @@ export function createLocalGeoJsonLayer(
     labels = true,
     labelMax = DEFAULT_LABEL_MAX,
     labelGridPx = DEFAULT_LABEL_GRID_PX,
-    // Optional per-feature anchor style: (properties) => { color?, pixelSize? }.
-    // Colour is a CSS string; the layer `color` stays the label accent.
-    styleForFeature = null,
     screenSpaceEventHandlerFactory = (canvas) =>
       new Cesium.ScreenSpaceEventHandler(canvas),
     projectToWindow = (scene, position) =>
@@ -686,20 +670,14 @@ export function createLocalGeoJsonLayer(
                   [base, tip],
                   [base, tip],
                 ];
-                const style = styleForFeature
-                  ? styleForFeature(properties)
-                  : null;
-                const featureColor = style?.color
-                  ? Cesium.Color.fromCssColorString(style.color)
-                  : baseColor;
                 feature.polyline = new Cesium.PolylineGraphics({
                   positions: stemPositionBuffers[0],
                   width: 3.5,
-                  material: new Cesium.ColorMaterialProperty(featureColor),
+                  material: new Cesium.ColorMaterialProperty(baseColor),
                 });
                 feature.point = new Cesium.PointGraphics({
-                  pixelSize: style?.pixelSize ?? 10,
-                  color: featureColor,
+                  pixelSize: 10,
+                  color: baseColor,
                   outlineColor: Cesium.Color.BLACK,
                   outlineWidth: 2,
                   // Never depth-cull the anchor against the photoreal mesh —
@@ -1214,11 +1192,6 @@ function labelPriorityFromProperties(props, layerId) {
   if (props.output || tags['plant:output:electricity']) score += 120;
   if (layerId === 'local-dams') score += 80;
   if (layerId === 'local-datacenters') score += 60;
-  // Plants: bigger nameplate wins the label slot (4,000 MW = +1000).
-  if (layerId === 'local-power-plants') {
-    const mw = Number(props.total_mw);
-    if (Number.isFinite(mw) && mw > 0) score += Math.min(mw, 4000) / 4;
-  }
   return score;
 }
 

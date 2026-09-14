@@ -3,11 +3,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import * as Cesium from 'cesium';
-import {
-  createInfrastructureLayers,
-  powerPlantStyle,
-  POWER_PLANT_FUEL_COLORS,
-} from 'gods-eye-view/infrastructure';
+import { createInfrastructureLayers } from 'gods-eye-view/infrastructure';
 import { createLocalGeoJsonLayer } from 'gods-eye-view/infrastructure/geojson';
 
 function services() {
@@ -67,7 +63,6 @@ test('infrastructure factory preserves identity and creates independent state wi
     [
       { id: 'local-datacenters', name: 'Datacenters', source: 'Local' },
       { id: 'local-dams', name: 'Dams', source: 'USACE' },
-      { id: 'local-power-plants', name: 'Power Plants', source: 'EIA-860' },
     ],
   );
   first.forEach((layer, index) => {
@@ -83,13 +78,12 @@ test('infrastructure factory preserves identity and creates independent state wi
 });
 
 test('dataset URLs still name the complete bundled sources', () => {
-  for (const [file, count, basename = file] of [
+  for (const [file, count] of [
     ['datacenters', 4351],
     ['dams', 704],
-    ['eia_power_plants', 13446, 'plants'],
   ]) {
     const lines = readFileSync(
-      new URL(`./local_data/${file}/${basename}.geojsonl`, import.meta.url),
+      new URL(`./local_data/${file}/${file}.geojsonl`, import.meta.url),
       'utf8',
     )
       .split('\n')
@@ -198,7 +192,7 @@ test('consumer build includes only infrastructure code and resolves assets under
     ['cesium'],
     'the viewer supplies the same Cesium dependency',
   );
-  for (const name of ['datacenters', 'dams', 'plants']) {
+  for (const name of ['datacenters', 'dams']) {
     const asset = output.find(
       (item) => item.type === 'asset' && item.fileName.includes(name),
     );
@@ -208,21 +202,4 @@ test('consumer build includes only infrastructure code and resolves assets under
       `${name} must retain the consumer base path`,
     );
   }
-});
-
-test('power plant anchors take the fuel colour and scale with nameplate MW', () => {
-  assert.deepEqual(powerPlantStyle({ fuel: 'nuclear', total_mw: 2200 }), {
-    color: POWER_PLANT_FUEL_COLORS.nuclear,
-    pixelSize: 16,
-  });
-  assert.deepEqual(powerPlantStyle({ fuel: 'solar', total_mw: 5 }), {
-    color: POWER_PLANT_FUEL_COLORS.solar,
-    pixelSize: 6,
-  });
-  assert.equal(
-    powerPlantStyle({ fuel: 'unlisted' }).color,
-    POWER_PLANT_FUEL_COLORS.other,
-  );
-  assert.equal(powerPlantStyle(null).pixelSize, 6);
-  assert.equal(powerPlantStyle({ fuel: 'gas', total_mw: 100 }).pixelSize, 10);
 });
