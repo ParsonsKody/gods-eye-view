@@ -9,6 +9,11 @@ import {
   MCC_NEUTRAL_COLOR,
   MCC_POSITIVE_COLOR,
   MCC_NEGATIVE_COLOR,
+  CONSTRAINT_COLOR,
+  normalizeNyisoRow,
+  formatIntervalEt,
+  lmpCardCopy,
+  lmpLegend,
 } from './lmpFeeds.js';
 
 const NYISO_TAIL = [
@@ -111,4 +116,89 @@ test('congestion colour diverges and saturates; size and label follow MCC', () =
   assert.equal(mccPixelSize(-40), 14);
   assert.equal(nodeLabel({ lmp: 42.4, mcc: 3.75 }), '$42 (+4)');
   assert.equal(nodeLabel({ lmp: 39.5, mcc: -1.25 }), '$40 (-1)');
+});
+
+test('NYISO rows flip to the SPP sign convention and gain an energy component', () => {
+  // NYISO identity: LBMP = MEC + MLC - MCC(raw). Raw +9 congestion lowers price.
+  const row = normalizeNyisoRow({
+    id: '1',
+    name: 'A',
+    lmp: 18,
+    mlc: 1.5,
+    mcc: 9,
+  });
+  assert.equal(row.mcc, -9);
+  assert.equal(row.mec, 25.5);
+  assert.ok(Math.abs(row.mec + row.mlc + row.mcc - row.lmp) < 0.005);
+  const spp = { lmp: 16.02, mlc: 0.01, mcc: -6.52, mec: 22.53 };
+  assert.ok(Math.abs(spp.mec + spp.mlc + spp.mcc - spp.lmp) < 0.005);
+});
+
+test('interval stamps render as Eastern HH:MM for both ISOs', () => {
+  assert.equal(formatIntervalEt('nyiso', '09/14/2026 11:30:00'), '11:30 ET');
+  assert.equal(formatIntervalEt('spp', '2026-09-14T13:10:00.000Z'), '09:10 ET');
+  assert.equal(formatIntervalEt('spp', '2026-01-14T05:00:00.000Z'), '00:00 ET');
+  assert.equal(formatIntervalEt('spp', null), null);
+  assert.equal(formatIntervalEt('nyiso', 'garbage'), null);
+});
+
+test('card copy decomposes a node price and describes a constraint', () => {
+  const now = Date.parse('2026-09-14T13:15:00Z');
+  const node = lmpCardCopy(
+    {
+      iso: 'nyiso',
+      kind: 'gen',
+      name: 'NINE MILE POINT 1',
+      lmp: 48.12,
+      mec: 40.1,
+      mcc: 5.02,
+      mlc: 3,
+      interval: '09/14/2026 09:10:00',
+      fetchedAt: now - 3 * 60000,
+    },
+    { nowMs: now },
+  );
+  assert.equal(node.title, 'NYISO gen · NINE MILE POINT 1');
+  assert.deepEqual(node.details, [
+    'LMP $48.12/MWh',
+    'Energy $40.10 · Congestion +$5.02 · Losses +$3.00',
+    '09:10 ET interval · updated 3m ago',
+  ]);
+  const con = lmpCardCopy(
+    {
+      iso: 'spp',
+      kind: 'binding',
+      name: 'TMP783_32985',
+      state: 'ACTIVATED',
+      shadowPrice: -1557.4,
+      monitored: 'LN VINETAP3 - NHAYS',
+      contingent: 'MIDW:KNOLL1',
+      interval: '2026-09-14T13:10:00.000Z',
+    },
+    { nowMs: now },
+  );
+  assert.equal(con.title, 'SPP binding · TMP783_32985');
+  assert.deepEqual(con.details, [
+    'Shadow price -$1,557/MWh · ACTIVATED',
+    'Monitored: LN VINETAP3 - NHAYS',
+    'Contingency: MIDW:KNOLL1',
+    '09:10 ET interval',
+  ]);
+});
+
+test('legend counts nodes by congestion sign and constraints', () => {
+  const legend = lmpLegend(
+    [{ mcc: 3 }, { mcc: -1 }, { mcc: 0 }, { mcc: NaN }, { mcc: 7 }],
+    [{ id: 'c1' }],
+  );
+  assert.deepEqual(
+    legend.map((l) => [l.label, l.count]),
+    [
+      ['congestion raises price', 2],
+      ['congestion lowers price', 1],
+      ['no congestion', 2],
+      ['SPP constraint', 1],
+    ],
+  );
+  assert.equal(legend[3].color, CONSTRAINT_COLOR);
 });

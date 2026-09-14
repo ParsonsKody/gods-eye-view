@@ -8,16 +8,30 @@ import {
   mccColor,
   mccPixelSize,
   nodeLabel,
+  lmpCardCopy,
+  lmpLegend,
+  formatIntervalEt,
   CONSTRAINT_COLOR,
 } from './lmpFeeds.js';
+import {
+  bindTrackingClickGesture,
+  isTrackingClickGesture,
+} from './trackingClickGesture.js';
+import { registerPickOwner, unregisterPickOwner } from './pickRegistry.js';
 
 /**
  * ISO real-time congestion layer: SPP + NYISO nodal LMP with the marginal
  * congestion component driving colour and size, plus SPP binding and M2M
  * constraints as gold markers sized by shadow price. Prices come from the
- * keyless /api/lmp proxy every 5 minutes. NYISO node coordinates are the
- * bundled iso_nodes/nyiso.geojsonl (built by tools/energy/build_nodes.py);
- * SPP coordinates ride along in the feed.
+ * keyless /api/lmp proxy every 5 minutes (positive congestion = priced up
+ * for both ISOs; the proxy normalises NYISO's sign). NYISO node coordinates
+ * are the bundled iso_nodes/nyiso.geojsonl (built by
+ * tools/energy/build_nodes.py); SPP coordinates ride along in the feed.
+ *
+ * Points live in one PointPrimitiveCollection and are updated in place on
+ * every refresh (no remove-and-rebuild churn). Each point's `id` is its
+ * plain record, which is what scene.pick() returns: hovering a point shows
+ * a detail card with the price decomposition, clicking pins it.
  */
 
 const API_URL = '/api/lmp';
@@ -28,14 +42,26 @@ const nyisoNodesUrl = new URL(
 ).href;
 
 export const LMP_OVERLAY_SOURCE_ID = 'iso-lmp';
+export const LMP_DETAIL_SOURCE_ID = 'iso-lmp-detail';
 export const LMP_OVERLAY_COHORT_LIMIT = 96;
 export const LMP_OVERLAY_COLLISION_CAPACITY = 48;
+/** Leading-edge throttle for hover picks while the pointer moves. */
+export const LMP_HOVER_PICK_THROTTLE_MS = 120;
+/** Linger before an unhovered card is released. */
+export const LMP_HOVER_RELEASE_MS = 1000;
 
 const DEFAULT_OVERLAY_HOST = Object.freeze({
   setEntries: setOverlayEntries,
   setVisible: setOverlaySourceVisible,
   clearSource: clearOverlaySource,
 });
+
+/** Pick ids of this layer: the record's string id. */
+export function isLmpPickId(id) {
+  return (
+    typeof id === 'string' && (id.startsWith('spp:') || id.startsWith('nyiso:'))
+  );
+}
 
 /**
  * Overlay label for a priced node or a constraint.
@@ -65,6 +91,40 @@ export function createLmpOverlayEntry({
     gapPx: 15,
     verticalOnly: true,
     placement: 'above',
+  };
+}
+
+/**
+ * Detail card for the hovered (card) or pinned (selected) record.
+ * @param {object} record Node or constraint record with `position`.
+ * @param {{pinned?:boolean, nowMs?:number}} [options]
+ * @returns {object}
+ */
+export function createLmpDetailEntry(record, { pinned = false, nowMs } = {}) {
+  const { title, details } = lmpCardCopy(record, { nowMs });
+  const accent =
+    record.kind === 'binding' || record.kind === 'm2m'
+      ? CONSTRAINT_COLOR
+      : mccColor(record.mcc);
+  return {
+    id: String(record.id),
+    position: record.position,
+    variant: pinned ? 'selected' : 'card',
+    selected: pinned,
+    protected: true,
+    paintLane: pinned ? 'selected' : 'ambient-card',
+    collisionGroup: 'ambient-card',
+    priority: Number.MAX_SAFE_INTEGER,
+    zIndex: 40,
+    title,
+    details,
+    accent,
+    interactive: false,
+    verticalOnly: true,
+    placement: 'above',
+    edgeFade: 'keyhole',
+    horizonCull: true,
+    terrainOcclusion: false,
   };
 }
 
@@ -115,18 +175,26 @@ export function parseNyisoNodes(text) {
 }
 
 /**
- * Join proxy payloads to coordinates and produce plain draw records.
+ * Join proxy payloads to coordinates and produce plain draw records. Every
+ * record carries its ISO, interval and fetch time for the detail card.
  * @param {object[]} payloads /api/lmp payloads (any subset of ISOs).
  * @param {Map<string, object>} nyisoNodes From parseNyisoNodes.
- * @returns {{points:object[], constraints:object[], intervals:Record<string,string|null>}}
+ * @returns {{points:object[], constraints:object[], intervals:Record<string,string|null>, stale:boolean}}
  */
 export function buildLmpRecords(payloads, nyisoNodes) {
   const points = [];
   const constraints = [];
   const intervals = {};
+  let stale = false;
   for (const payload of payloads) {
     if (!payload || !Array.isArray(payload.nodes)) continue;
     intervals[payload.iso] = payload.interval || null;
+    if (payload.stale) stale = true;
+    const meta = {
+      iso: payload.iso,
+      interval: payload.interval || null,
+      fetchedAt: payload.fetchedAt || null,
+    };
     for (const node of payload.nodes) {
       let { lat, lon, name } = node;
       if (payload.iso === 'nyiso') {
@@ -137,25 +205,44 @@ export function buildLmpRecords(payloads, nyisoNodes) {
         name = hit.name || name;
       }
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
-      points.push({ ...node, iso: payload.iso, lat, lon, name });
+      points.push({ ...node, ...meta, lat, lon, name });
     }
     for (const c of payload.constraints || []) {
       if (!Number.isFinite(c.lat) || !Number.isFinite(c.lon)) continue;
-      constraints.push({ ...c, iso: payload.iso });
+      constraints.push({ ...c, ...meta });
     }
   }
-  return { points, constraints, intervals };
+  return { points, constraints, intervals, stale };
+}
+
+function constraintPixelSize(shadowPrice) {
+  return Math.round(7 + Math.min(11, Math.abs(shadowPrice) / 25));
 }
 
 export function createIsoLmpLayer({ overlayHost = DEFAULT_OVERLAY_HOST } = {}) {
-  let _dataSource = null;
+  let _viewer = null;
+  let _points = null;
+  /** @type {Map<string, {record:object, point:Cesium.PointPrimitive}>} */
+  let _drawn = new Map();
   let _count = 0;
   let _lastUpdate = null;
   let _lastError = null;
+  let _intervals = {};
+  let _stale = false;
+  let _legend = [];
   let _enabled = false;
   /** @type {Map<string, object>|null} */
   let _nyisoNodes = null;
   let _nyisoNodesPromise = null;
+  let _handler = null;
+  let _hoverId = null;
+  let _pinnedId = null;
+  let _hoverLastPickAt = 0;
+  let _hoverReleaseTimer = 0;
+  let _cameraMoving = false;
+  let _removeMoveStart = null;
+  let _removeMoveEnd = null;
+  let _rowControlsListener = null;
 
   async function loadNyisoNodes() {
     if (_nyisoNodes) return _nyisoNodes;
@@ -176,6 +263,189 @@ export function createIsoLmpLayer({ overlayHost = DEFAULT_OVERLAY_HOST } = {}) {
     return _nyisoNodesPromise;
   }
 
+  /** Our record from a scene.pick() result, or null. */
+  function pickedRecord(picked) {
+    const id = picked?.id;
+    if (!id || typeof id !== 'object') return null;
+    const drawn = _drawn.get(String(id.id));
+    return drawn && drawn.record === id ? drawn.record : null;
+  }
+
+  function setCursor(pointer) {
+    const canvas = _viewer?.scene?.canvas;
+    if (canvas) canvas.style.cursor = pointer ? 'pointer' : '';
+  }
+
+  function publishDetail() {
+    const id = _pinnedId || _hoverId;
+    const drawn = id ? _drawn.get(id) : null;
+    if (!_enabled || !drawn) {
+      overlayHost.clearSource(LMP_DETAIL_SOURCE_ID);
+      return;
+    }
+    overlayHost.setEntries(
+      LMP_DETAIL_SOURCE_ID,
+      [createLmpDetailEntry(drawn.record, { pinned: id === _pinnedId })],
+      { cohortLimit: 1, collisionCapacity: 1, moving: false },
+    );
+  }
+
+  function cancelHoverRelease() {
+    if (_hoverReleaseTimer) {
+      clearTimeout(_hoverReleaseTimer);
+      _hoverReleaseTimer = 0;
+    }
+  }
+
+  function scheduleHoverRelease() {
+    if (_hoverReleaseTimer) return;
+    _hoverReleaseTimer = setTimeout(() => {
+      _hoverReleaseTimer = 0;
+      _hoverId = null;
+      publishDetail();
+    }, LMP_HOVER_RELEASE_MS);
+  }
+
+  function clearHover() {
+    cancelHoverRelease();
+    _hoverId = null;
+    _hoverLastPickAt = 0;
+    setCursor(false);
+  }
+
+  /**
+   * Throttled MOUSE_MOVE pass (CCTV pattern): at most ~8 picks/s while the
+   * pointer moves, nothing while it rests or the camera flies.
+   */
+  function handleHoverMove(position) {
+    if (!_enabled || _cameraMoving || !position) return;
+    if (!_viewer || _viewer.isDestroyed()) return;
+    const now = Date.now();
+    if (now - _hoverLastPickAt < LMP_HOVER_PICK_THROTTLE_MS) return;
+    _hoverLastPickAt = now;
+    let picked = null;
+    try {
+      picked = _viewer.scene.pick(position);
+    } catch {
+      picked = null;
+    }
+    const record = pickedRecord(picked);
+    setCursor(Boolean(record));
+    if (record) {
+      cancelHoverRelease();
+      if (record.id !== _hoverId) {
+        _hoverId = record.id;
+        publishDetail();
+      }
+    } else if (_hoverId) {
+      scheduleHoverRelease();
+    }
+  }
+
+  function handleClick(click, gesture) {
+    if (!_enabled || !_viewer || _viewer.isDestroyed()) return;
+    if (!isTrackingClickGesture(gesture)) return;
+    let picked = null;
+    try {
+      picked = _viewer.scene.pick(click?.position);
+    } catch {
+      picked = null;
+    }
+    const record = pickedRecord(picked);
+    if (record) {
+      _pinnedId = _pinnedId === record.id ? null : record.id;
+    } else if (_pinnedId) {
+      _pinnedId = null;
+    } else {
+      return;
+    }
+    publishDetail();
+  }
+
+  function installInput(viewer) {
+    if (_handler || !viewer?.scene?.canvas) return;
+    _handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+    bindTrackingClickGesture(_handler, handleClick, {
+      onMouseMove: (event) => handleHoverMove(event?.endPosition),
+    });
+    _removeMoveStart = viewer.camera.moveStart.addEventListener(() => {
+      _cameraMoving = true;
+    });
+    _removeMoveEnd = viewer.camera.moveEnd.addEventListener(() => {
+      _cameraMoving = false;
+    });
+    registerPickOwner('iso-lmp', isLmpPickId);
+  }
+
+  function removeInput() {
+    unregisterPickOwner('iso-lmp');
+    if (_removeMoveStart) _removeMoveStart();
+    if (_removeMoveEnd) _removeMoveEnd();
+    _removeMoveStart = null;
+    _removeMoveEnd = null;
+    if (_handler && !_handler.isDestroyed()) _handler.destroy();
+    _handler = null;
+  }
+
+  /** Update points in place: mutate existing, add new, drop vanished. */
+  function reconcile(points, constraints) {
+    const next = new Set();
+    const upsert = (record, style) => {
+      next.add(record.id);
+      record.position = Cesium.Cartesian3.fromDegrees(record.lon, record.lat);
+      const existing = _drawn.get(record.id);
+      if (existing) {
+        existing.record = record;
+        existing.point.id = record;
+        existing.point.position = record.position;
+        existing.point.color = style.color;
+        existing.point.pixelSize = style.pixelSize;
+        existing.point.outlineWidth = style.outlineWidth;
+        return;
+      }
+      const point = _points.add({
+        id: record,
+        position: record.position,
+        pixelSize: style.pixelSize,
+        color: style.color,
+        outlineColor: Cesium.Color.BLACK.withAlpha(0.6),
+        outlineWidth: style.outlineWidth,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      });
+      _drawn.set(record.id, { record, point });
+    };
+    for (const p of points) {
+      upsert(p, {
+        color: Cesium.Color.fromCssColorString(mccColor(p.mcc)).withAlpha(0.92),
+        pixelSize: mccPixelSize(p.mcc),
+        outlineWidth: 1,
+      });
+    }
+    const gold = Cesium.Color.fromCssColorString(CONSTRAINT_COLOR);
+    for (const c of constraints) {
+      upsert(c, {
+        color: gold.withAlpha(c.shadowPrice ? 0.95 : 0.45),
+        pixelSize: constraintPixelSize(c.shadowPrice),
+        outlineWidth: 1.5,
+      });
+    }
+    for (const [id, drawn] of _drawn) {
+      if (next.has(id)) continue;
+      _points.remove(drawn.point);
+      _drawn.delete(id);
+    }
+    if (_hoverId && !_drawn.has(_hoverId)) _hoverId = null;
+    if (_pinnedId && !_drawn.has(_pinnedId)) _pinnedId = null;
+  }
+
+  function loadingLabel() {
+    const parts = ISOS.map((iso) => {
+      const stamp = formatIntervalEt(iso, _intervals[iso]);
+      return stamp ? `${iso.toUpperCase()} ${stamp}` : null;
+    }).filter(Boolean);
+    return parts.length ? parts.join(' · ') : null;
+  }
+
   const layer = {
     id: 'iso-lmp',
     name: 'ISO Congestion (LMP)',
@@ -184,27 +454,41 @@ export function createIsoLmpLayer({ overlayHost = DEFAULT_OVERLAY_HOST } = {}) {
     updateInterval: 300000,
 
     init(viewer) {
-      _dataSource = new Cesium.CustomDataSource('iso-lmp');
-      _dataSource.show = false;
-      viewer.dataSources.add(_dataSource);
+      _viewer = viewer;
+      _points = new Cesium.PointPrimitiveCollection({
+        blendOption: Cesium.BlendOption.TRANSLUCENT,
+      });
+      viewer.scene.primitives.add(_points);
+      _points.show = false;
+      _drawn = new Map();
       _count = 0;
       _lastUpdate = null;
       _lastError = null;
+      _intervals = {};
+      _stale = false;
+      _legend = [];
       _enabled = false;
       overlayHost.setVisible(LMP_OVERLAY_SOURCE_ID, false);
+      overlayHost.setVisible(LMP_DETAIL_SOURCE_ID, false);
+      installInput(viewer);
     },
 
     enable() {
       _enabled = true;
-      if (_dataSource) _dataSource.show = true;
+      if (_points) _points.show = true;
       overlayHost.setVisible(LMP_OVERLAY_SOURCE_ID, true);
+      overlayHost.setVisible(LMP_DETAIL_SOURCE_ID, true);
     },
 
     disable() {
       _enabled = false;
-      if (_dataSource) _dataSource.show = false;
+      if (_points) _points.show = false;
+      clearHover();
+      _pinnedId = null;
       overlayHost.clearSource(LMP_OVERLAY_SOURCE_ID);
+      overlayHost.clearSource(LMP_DETAIL_SOURCE_ID);
       overlayHost.setVisible(LMP_OVERLAY_SOURCE_ID, false);
+      overlayHost.setVisible(LMP_DETAIL_SOURCE_ID, false);
     },
 
     async update() {
@@ -233,89 +517,38 @@ export function createIsoLmpLayer({ overlayHost = DEFAULT_OVERLAY_HOST } = {}) {
           _lastError = failures.join('; ') || 'no ISO feed';
           return false;
         }
+        if (!_points) return false;
 
-        const { points, constraints } = buildLmpRecords(payloads, nyisoNodes);
-        const nextEntities = [];
+        const { points, constraints, intervals, stale } = buildLmpRecords(
+          payloads,
+          nyisoNodes,
+        );
+        reconcile(points, constraints);
+
         const overlayEntries = [];
-
         for (const p of points) {
-          const position = Cesium.Cartesian3.fromDegrees(p.lon, p.lat);
-          const color = Cesium.Color.fromCssColorString(mccColor(p.mcc));
-          nextEntities.push(
-            new Cesium.Entity({
-              id: `lmp:${p.id}`,
-              position,
-              point: {
-                pixelSize: mccPixelSize(p.mcc),
-                color: color.withAlpha(0.92),
-                outlineColor: Cesium.Color.BLACK.withAlpha(0.6),
-                outlineWidth: 1,
-                heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-                disableDepthTestDistance: Number.POSITIVE_INFINITY,
-              },
-              properties: {
-                iso: p.iso,
-                node: p.name,
-                kind: p.kind,
-                lmp: p.lmp,
-                mcc: p.mcc,
-                mlc: p.mlc,
-              },
-            }),
-          );
           overlayEntries.push(
             createLmpOverlayEntry({
               id: p.id,
-              position,
+              position: p.position,
               title: nodeLabel(p),
-              accent: color.toCssColorString(),
+              accent: mccColor(p.mcc),
               priority: Math.round(Math.abs(p.mcc) * 100),
             }),
           );
         }
-
-        const gold = Cesium.Color.fromCssColorString(CONSTRAINT_COLOR);
         for (const c of constraints) {
-          const position = Cesium.Cartesian3.fromDegrees(c.lon, c.lat);
-          const size = 7 + Math.min(11, Math.abs(c.shadowPrice) / 25);
-          nextEntities.push(
-            new Cesium.Entity({
-              id: `lmp:${c.id}`,
-              position,
-              point: {
-                pixelSize: Math.round(size),
-                color: gold.withAlpha(c.shadowPrice ? 0.95 : 0.45),
-                outlineColor: Cesium.Color.BLACK.withAlpha(0.7),
-                outlineWidth: 1.5,
-                heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-                disableDepthTestDistance: Number.POSITIVE_INFINITY,
-              },
-              properties: {
-                iso: c.iso,
-                constraint: c.name,
-                kind: c.kind,
-                state: c.state,
-                shadowPrice: c.shadowPrice,
-                monitored: c.monitored,
-                contingent: c.contingent,
-              },
+          if (!c.shadowPrice) continue;
+          overlayEntries.push(
+            createLmpOverlayEntry({
+              id: c.id,
+              position: c.position,
+              title: `${c.name} $${Math.round(c.shadowPrice)}`,
+              accent: CONSTRAINT_COLOR,
+              priority: 100000 + Math.round(Math.abs(c.shadowPrice) * 100),
             }),
           );
-          if (c.shadowPrice) {
-            overlayEntries.push(
-              createLmpOverlayEntry({
-                id: c.id,
-                position,
-                title: `${c.name} $${Math.round(c.shadowPrice)}`,
-                accent: CONSTRAINT_COLOR,
-                priority: 100000 + Math.round(Math.abs(c.shadowPrice) * 100),
-              }),
-            );
-          }
         }
-
-        _dataSource.entities.removeAll();
-        for (const entity of nextEntities) _dataSource.entities.add(entity);
         if (_enabled) {
           overlayHost.setEntries(
             LMP_OVERLAY_SOURCE_ID,
@@ -326,11 +559,17 @@ export function createIsoLmpLayer({ overlayHost = DEFAULT_OVERLAY_HOST } = {}) {
               moving: false,
             },
           );
+          publishDetail();
         }
 
-        _count = nextEntities.length;
+        _count = _drawn.size;
         _lastUpdate = Date.now();
         _lastError = failures.length ? failures.join('; ') : null;
+        _intervals = intervals;
+        _stale = stale;
+        _legend = lmpLegend(points, constraints);
+        _rowControlsListener?.();
+        _viewer?.scene?.requestRender?.();
         console.log(
           `[Data:ISO LMP] Updated: ${points.length} nodes, ${constraints.length} constraints`,
         );
@@ -344,19 +583,47 @@ export function createIsoLmpLayer({ overlayHost = DEFAULT_OVERLAY_HOST } = {}) {
 
     destroy(viewer) {
       _enabled = false;
+      clearHover();
+      _pinnedId = null;
+      removeInput();
       overlayHost.clearSource(LMP_OVERLAY_SOURCE_ID);
+      overlayHost.clearSource(LMP_DETAIL_SOURCE_ID);
       overlayHost.setVisible(LMP_OVERLAY_SOURCE_ID, false);
-      if (_dataSource) {
-        viewer.dataSources.remove(_dataSource, true);
-        _dataSource = null;
+      overlayHost.setVisible(LMP_DETAIL_SOURCE_ID, false);
+      const target = viewer || _viewer;
+      if (_points) {
+        try {
+          target?.scene?.primitives?.remove(_points);
+        } catch {
+          /* collection already gone */
+        }
+        _points = null;
       }
+      _drawn = new Map();
       _count = 0;
       _lastUpdate = null;
       _lastError = null;
+      _intervals = {};
+      _legend = [];
+      _viewer = null;
+    },
+
+    getRowControls() {
+      return { chips: [], legend: _legend };
+    },
+
+    setRowControlsListener(listener) {
+      _rowControlsListener = typeof listener === 'function' ? listener : null;
     },
 
     getStats() {
-      return { count: _count, lastUpdate: _lastUpdate, error: _lastError };
+      return {
+        count: _count,
+        lastUpdate: _lastUpdate,
+        error: _lastError,
+        stale: _stale,
+        loadingLabel: loadingLabel(),
+      };
     },
   };
   return layer;

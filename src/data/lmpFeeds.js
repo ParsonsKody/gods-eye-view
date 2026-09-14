@@ -197,3 +197,170 @@ export function nodeLabel(node) {
   const sign = mcc > 0 ? '+' : '';
   return `$${Number.isFinite(lmp) ? lmp.toFixed(0) : '?'} (${sign}${mcc.toFixed(0)})`;
 }
+
+/**
+ * NYISO publishes LBMP = energy + losses - congestion, so its congestion
+ * component is positive where congestion LOWERS the price. SPP, and the
+ * colour scale of the layer, use LMP = energy + congestion + losses. Flip
+ * the NYISO sign so a positive congestion component means "priced up" for
+ * both ISOs, and derive the energy component the file does not carry.
+ * @param {{lmp:number,mlc:number,mcc:number}} row Parsed NYISO row.
+ * @returns {object} Row with SPP-convention `mcc` and a derived `mec`.
+ */
+export function normalizeNyisoRow(row) {
+  const lmp = Number(row?.lmp);
+  const mlc = Number(row?.mlc);
+  const mcc = -Number(row?.mcc);
+  return { ...row, mcc, mec: round2(lmp - mlc - mcc) };
+}
+
+function round2(value) {
+  return Math.round(value * 100) / 100;
+}
+
+const NYISO_STAMP = /^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2})/;
+
+/**
+ * Interval stamp as Eastern wall-clock "HH:MM ET". NYISO stamps are already
+ * Eastern ("MM/DD/YYYY HH:MM:SS"); SPP stamps are ISO UTC.
+ * @param {string} iso 'nyiso' | 'spp'.
+ * @param {string|null|undefined} interval Feed interval string.
+ * @returns {string|null}
+ */
+export function formatIntervalEt(iso, interval) {
+  if (!interval) return null;
+  if (iso === 'nyiso') {
+    const m = NYISO_STAMP.exec(String(interval));
+    return m ? `${m[4]}:${m[5]} ET` : null;
+  }
+  const ms = Date.parse(String(interval));
+  if (!Number.isFinite(ms)) return null;
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date(ms));
+  const get = (type) => parts.find((p) => p.type === type)?.value;
+  const hour = get('hour') === '24' ? '00' : get('hour');
+  return `${hour}:${get('minute')} ET`;
+}
+
+function money(value, { signed = false, decimals = 2 } = {}) {
+  const v = Number(value);
+  if (!Number.isFinite(v)) return '?';
+  const abs = Math.abs(v).toLocaleString('en-US', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+  if (v < 0) return `-$${abs}`;
+  return `${signed && v > 0 ? '+' : ''}$${abs}`;
+}
+
+function ago(nowMs, thenMs) {
+  const delta = Number(nowMs) - Number(thenMs);
+  if (!Number.isFinite(delta) || delta < 0) return null;
+  const minutes = Math.floor(delta / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  return `${Math.floor(minutes / 60)}h ago`;
+}
+
+const KIND_LABELS = Object.freeze({
+  gen: 'gen',
+  hub: 'hub',
+  'dc-tie': 'DC tie',
+  interface: 'interface',
+  binding: 'binding',
+  m2m: 'M2M',
+});
+
+/**
+ * Title and detail rows for the hover / pinned detail card.
+ * @param {object} record Priced node or constraint record as drawn.
+ * @param {object} [options]
+ * @param {number} [options.nowMs] Clock for the "updated N ago" row.
+ * @returns {{title:string, details:string[]}}
+ */
+export function lmpCardCopy(record, { nowMs = Date.now() } = {}) {
+  const iso = String(record?.iso || '').toUpperCase();
+  const kind = KIND_LABELS[record?.kind] || String(record?.kind || '');
+  const title = `${iso} ${kind} · ${record?.name || '?'}`.trim();
+  const when = [
+    formatIntervalEt(record?.iso, record?.interval)
+      ? `${formatIntervalEt(record?.iso, record?.interval)} interval`
+      : null,
+    record?.fetchedAt ? `updated ${ago(nowMs, record.fetchedAt)}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  const details = [];
+  if (record?.kind === 'binding' || record?.kind === 'm2m') {
+    details.push(
+      [
+        `Shadow price ${money(record.shadowPrice, { decimals: 0 })}/MWh`,
+        record.state || null,
+      ]
+        .filter(Boolean)
+        .join(' · '),
+    );
+    if (record.monitored) details.push(`Monitored: ${record.monitored}`);
+    if (record.contingent) details.push(`Contingency: ${record.contingent}`);
+  } else {
+    details.push(`LMP ${money(record?.lmp)}/MWh`);
+    details.push(
+      [
+        `Energy ${money(record?.mec)}`,
+        `Congestion ${money(record?.mcc, { signed: true })}`,
+        `Losses ${money(record?.mlc, { signed: true })}`,
+      ].join(' · '),
+    );
+  }
+  if (when) details.push(when);
+  return { title, details };
+}
+
+/**
+ * Legend rows for the layer panel: counts of priced nodes by congestion
+ * sign plus the constraint count.
+ * @param {object[]} points Priced node records.
+ * @param {object[]} constraints Constraint records.
+ * @returns {Array<{color:string,label:string,count:number,blurb:string}>}
+ */
+export function lmpLegend(points, constraints) {
+  let up = 0;
+  let down = 0;
+  let flat = 0;
+  for (const p of points || []) {
+    const v = Number(p?.mcc) || 0;
+    if (v > 0) up += 1;
+    else if (v < 0) down += 1;
+    else flat += 1;
+  }
+  return [
+    {
+      color: MCC_POSITIVE_COLOR,
+      label: 'congestion raises price',
+      count: up,
+      blurb: 'Positive congestion component; colour saturates at $20/MWh',
+    },
+    {
+      color: MCC_NEGATIVE_COLOR,
+      label: 'congestion lowers price',
+      count: down,
+      blurb: 'Negative congestion component; colour saturates at -$20/MWh',
+    },
+    {
+      color: MCC_NEUTRAL_COLOR,
+      label: 'no congestion',
+      count: flat,
+      blurb: 'Congestion component is zero',
+    },
+    {
+      color: CONSTRAINT_COLOR,
+      label: 'SPP constraint',
+      count: (constraints || []).length,
+      blurb: 'Binding or M2M constraint, sized by shadow price',
+    },
+  ];
+}

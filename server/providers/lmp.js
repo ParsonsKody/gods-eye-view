@@ -4,6 +4,7 @@ import { promises as fsp } from 'node:fs';
 import {
   parseNyisoRealtimeTail,
   normalizeSppFeatures,
+  normalizeNyisoRow,
 } from '../../src/data/lmpFeeds.js';
 
 /**
@@ -113,7 +114,9 @@ export function lmpProxy() {
       return {
         at: Date.now(),
         interval: parsed.interval,
-        nodes: parsed.rows.map((r) => ({
+        // Sign flipped to the SPP convention (positive = priced up) and the
+        // energy component derived; see normalizeNyisoRow.
+        nodes: parsed.rows.map(normalizeNyisoRow).map((r) => ({
           id: `nyiso:${r.id}`,
           ptid: r.id,
           name: r.name,
@@ -121,6 +124,7 @@ export function lmpProxy() {
           lmp: r.lmp,
           mcc: r.mcc,
           mlc: r.mlc,
+          mec: r.mec,
         })),
         constraints: [],
       };
