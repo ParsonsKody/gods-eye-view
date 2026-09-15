@@ -6,6 +6,11 @@ import {
 } from './data/detectionPolicy.js';
 import { clampScopeTerminusPct } from './scopeMask.js';
 import { decodeLayerStateParams, encodeLayerStateParams } from './data/layerState.js';
+import {
+  CURSOR_HASH_PARAM,
+  decodeCursorParam,
+  encodeCursorParam,
+} from './data/timeCursor.js';
 
 /**
  * Share Links — URL Hash State Management
@@ -126,6 +131,7 @@ export class ShareLinkManager {
     this._layerStateProvider = null;
     this._panelStateProvider = null;
     this._styleParamStateProvider = null;
+    this._timeCursorProvider = null;
     this._initialRestorePending = false;
     this._restoreAuthority = {
       visual: 0,
@@ -231,6 +237,8 @@ export class ShareLinkManager {
         && decodedLayerState === null,
       panelState: decodePanelStateParams(params),
       sharedAtMs: decodeShareCreatedAtMs(params),
+      // Energy-layer hour cursor (`t`, epoch hours); absent or malformed = LIVE.
+      timeCursorMs: decodeCursorParam(params.get(CURSOR_HASH_PARAM)),
     };
     state.restoreAuthority = {
       visual: this._restoreAuthority.visual,
@@ -327,6 +335,7 @@ export class ShareLinkManager {
         mapStack: mapCurrent ? state.mapStack : undefined,
         panelState,
         styleParams: visualCurrent ? state.styleParams : undefined,
+        timeCursorMs: state.timeCursorMs ?? null,
       });
       restoreStatus = 'applied';
     }
@@ -370,6 +379,16 @@ export class ShareLinkManager {
   /** Install the active visual preset parameter source used by URL generation. */
   setStyleParamStateProvider(provider) {
     this._styleParamStateProvider = typeof provider === 'function' ? provider : null;
+  }
+
+  /** Install the energy-layer time cursor source used by URL generation. */
+  setTimeCursorProvider(provider) {
+    this._timeCursorProvider = typeof provider === 'function' ? provider : null;
+  }
+
+  /** Called when the time cursor moves. */
+  onTimeCursorChange() {
+    this._scheduleUpdate();
   }
 
   /** Called only when the durable layer preference model changes. */
@@ -511,6 +530,8 @@ export class ShareLinkManager {
     const layerState = this._layerStateProvider?.();
     if (layerState) encodeLayerStateParams(params, layerState);
     this._encodePanelStateParam(params, this._panelStateProvider?.());
+    const cursorParam = encodeCursorParam(this._timeCursorProvider?.() ?? null);
+    if (cursorParam !== null) params.set(CURSOR_HASH_PARAM, cursorParam);
     encodeStyleParamState(
       params,
       this._currentStyle,
@@ -541,6 +562,7 @@ export class ShareLinkManager {
     this._layerStateProvider = null;
     this._panelStateProvider = null;
     this._styleParamStateProvider = null;
+    this._timeCursorProvider = null;
     this._onRestore = null;
   }
 }

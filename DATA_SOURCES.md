@@ -26,6 +26,7 @@ How to read this:
 | **USGS** | Earthquakes | U.S. public domain | "Data courtesy of the U.S. Geological Survey" |
 | **SPP price contour map** (ArcGIS, keyless) | ISO Congestion (LMP): hubs, DC ties, interfaces, binding + M2M constraints | Public ISO market data | "Southwest Power Pool" (courtesy) |
 | **NYISO MIS** (real-time generator LBMP CSV, keyless) | ISO Congestion (LMP): generator nodes | Public ISO market data | "NYISO" (courtesy) |
+| **NYISO MIS** (day-ahead generator LBMP day files `damlbmp/<day>damlbmp_gen.csv`, keyless) | ISO Congestion (LMP) at a time-bar hour: hourly day-ahead prices for the last ten days through tomorrow; `/api/lmp?iso=nyiso&date=YYYYMMDD` | Public ISO market data | "NYISO" (courtesy) |
 | **NYISO MIS** (interface limits and flows CSV, keyless) | Interface Flows: 18 internal and external interfaces, 5-minute flow vs posted limits | Public ISO market data | "NYISO" (courtesy) |
 | **NYISO MIS** (real-time fuel mix, actual load and transmission outage CSVs, keyless) | Grid conditions behind the ISO Congestion chips, the Fleet row on NYISO plant cards, dashed outaged lines and the neighbourhood rows on constrained-line cards; `/api/grid?iso=nyiso` | Public ISO market data | "NYISO" (courtesy) |
 | **SPP Portal** (`chart-api/gen-mix`, keyless) | SPP load and generation mix behind the ISO Congestion chips and the Fleet row on SPP plant cards; `/api/grid?iso=spp` | Public ISO market data | "Southwest Power Pool" (courtesy) |
@@ -44,6 +45,19 @@ How to read this:
 | **GBFS (Lyft / BCycle)** | Bikeshare availability | Per-feed (attribution-only) | Credit the operator (e.g. Austin BCycle) + its `license_url` |
 | **Radio Browser** | Geolocated internet-radio station directory and station-level tags | Public-domain directory data under PDDL 1.0; individual broadcaster stream terms apply | "Radio Browser" plus a link to the selected broadcaster |
 | **Re:Earth Terrain** (Mapterhorn) | Terrain (keyless globe stacks — OSM etc. — + `/api/terrain/heights` ellipsoidal-height lookups) | Terrain mesh: CC BY 4.0; geoid: EGM2008 (NGA, public domain) | "Terrain (keyless globe stacks): Re:Earth Terrain / Mapterhorn (CC BY 4.0) / EGM2008 (NGA)" |
+
+## Private data seam (never in this repo)
+
+The ISO Congestion layer can read a local folder named by `GEV_PRIVATE_DATA_DIR`
+in `.env`, served to localhost only at `/api/private/<name>.json`. The folder
+holds `series.json` (hourly forecast, day-ahead and real-time prices per node),
+and later `constraints.json` and `units.json`, in the format documented in
+`src/data/privateData.js`. Whatever fills it (a production-cost model, a market
+data subscription, a settlement database) lives outside this repository along
+with its credentials; nothing from the folder is bundled, cached to git, or
+sent anywhere. With the variable unset the layer uses the synthetic fixture
+below and the layer row says DEMO. SPP publishes its day-ahead price archive
+behind a portal token, so SPP history reaches the map only through this seam.
 
 ### Notes on the live sources
 
@@ -73,6 +87,7 @@ Static datasets shipped in the repo for an out-of-the-box experience. **None are
 | **EIA Transmission Lines** (3,467 lines >= 345 kV nationwide + 19,846 lines 100 to 230 kV in SPP/NYISO, [EIA Atlas archive](https://atlas.eia.gov/datasets/d4090758322c4d32a4cd002ffaa0aa12_0/about) of HIFLD, frozen Sep 2024) | `eia_transmission_lines/` | **US Government work** (Esri open data terms on the Atlas portal) | ✅ | "EIA / HIFLD" (courtesy; not legally required) |
 | **EIA Power Plants** (13,446 US plants, EIA-860/860M via [EIA Atlas](https://atlas.eia.gov/datasets/bf5c5110b1b944d299bb683cdbd02d2a), balancing authority joined from [EIA-860M](https://www.eia.gov/electricity/data/eia860m/)) | `eia_power_plants/` | **Public domain** (US Government work) | ✅ (no restrictions) | "U.S. Energy Information Administration" (courtesy; not legally required) |
 | **EIA-923 net generation** (3,571 monthly-survey plants, Jan to Jun 2026, [EIA-923](https://www.eia.gov/electricity/data/eia923/)) for the capacity factor on plant cards | `eia_power_plants/capacity_factors.json` | **Public domain** (US Government work) | ✅ (no restrictions) | "U.S. Energy Information Administration" (courtesy; not legally required) |
+| **Private series fixture** (51 SPP price-contour nodes, synthetic hourly prices, seven days back and two ahead) standing in for `GEV_PRIVATE_DATA_DIR` | `private_fixture/` | Coordinates: public ISO data; values: invented | ✅ (not data) | none |
 | **NRC reactor units** (94 units over 54 plants, [NRC power reactor status](https://www.nrc.gov/reading-rm/doc-collections/event-status/reactor-status/)) mapping NRC unit names to EIA plants for the live Output row | `eia_power_plants/reactor_units.json` | **Public domain** (US Government work) | ✅ (no restrictions) | "U.S. Nuclear Regulatory Commission" (courtesy; not legally required) |
 | **TeleGeography Submarine Cable Map** (712 cables + 1,917 landing points) | `telegeography_submarine_cables/` | **CC BY-NC-SA 3.0** | ❌ **NonCommercial — remove for commercial use** | "© TeleGeography — submarinecablemap.com" |
 | **Natural Earth physical regions** (1,046 land + 292 marine named polygons) | `natural_earth/` | **Public domain** | ✅ (no restrictions) | "Made with Natural Earth" (courtesy credit — not legally required) |

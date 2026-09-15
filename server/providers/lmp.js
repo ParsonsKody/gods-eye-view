@@ -4,6 +4,7 @@ import { promises as fsp } from 'node:fs';
 import {
   parseNyisoRealtimeTail,
   parseNyisoLimitingConstraints,
+  parseNyisoDayFile,
   normalizeSppFeatures,
   normalizeNyisoRow,
 } from '../../src/data/lmpFeeds.js';
@@ -15,6 +16,18 @@ import {
  *   GET /api/lmp?iso=nyiso → {iso, fetchedAt, stale, ttlMs, interval, nodes, constraints}
  *   GET /api/lmp?iso=spp   → same shape; SPP nodes carry lat/lon, NYISO nodes
  *                            are joined to bundled coordinates client-side.
+ *   GET /api/lmp?iso=nyiso&date=YYYYMMDD
+ *                          → {iso, kind:'da', date, fetchedAt, stale, ttlMs,
+ *                             hours:[epoch ms], nodes:[{id, ptid, name,
+ *                             lmp:[], mcc:[], mlc:[], mec:[]}]}: the whole
+ *                            day-ahead generator LBMP file for that Eastern
+ *                            day (damlbmp_gen, about 1 MB, 24 columns; the
+ *                            next day's file is posted around 11:00 ET).
+ *                            Dates outside the last ten days or past
+ *                            tomorrow are rejected. SPP publishes its
+ *                            day-ahead archive behind a portal token, so
+ *                            `iso=spp&date=` answers 404 and history for SPP
+ *                            comes from the private data seam.
  *
  * NYISO upstream: mis.nyiso.com daily realtime_gen.csv (about 8 MB by day
  * end). Only the last NYISO_TAIL_BYTES are read via HTTP Range; the parser
@@ -184,6 +197,126 @@ export function lmpProxy() {
     return { at: Date.now(), ...out };
   }
 
+  const DAY_MAX_BYTES = 4_194_304;
+  const DAY_PAST_TTL_MS = 6 * 3_600_000;
+  const DAY_RECENT_TTL_MS = 900_000;
+  const DAY_MISSING_TTL_MS = 900_000;
+  const DAY_LOOKBACK = 10;
+  const DATE_RE = /^\d{8}$/;
+  /** @type {Map<string, {at:number, missing?:boolean, hours?:number[], nodes?:object[]}>} */
+  const dayMem = new Map();
+  /** @type {Map<string, Promise<object|null>>} */
+  const dayInflight = new Map();
+
+  const dayCachePath = (stamp) =>
+    path.join(CACHE_DIR, `lmp-nyiso-da-${stamp}.json`);
+
+  /** A day file is final once its Eastern day has fully passed. */
+  function dayTtl(stamp) {
+    return stamp < nyisoDayStamp(0) ? DAY_PAST_TTL_MS : DAY_RECENT_TTL_MS;
+  }
+
+  /** Accept only stamps from ten days back through tomorrow (Eastern). */
+  function dayStampAllowed(stamp) {
+    if (!DATE_RE.test(stamp)) return false;
+    return stamp >= nyisoDayStamp(DAY_LOOKBACK) && stamp <= nyisoDayStamp(-1);
+  }
+
+  async function fetchNyisoDayFile(stamp) {
+    const url = `https://mis.nyiso.com/public/csv/damlbmp/${stamp}damlbmp_gen.csv`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`NYISO HTTP ${res.status}`);
+    const parsed = parseNyisoDayFile(await readCapped(res, DAY_MAX_BYTES));
+    if (!parsed) throw new Error('NYISO day-ahead file had no rows');
+    return { at: Date.now(), ...parsed };
+  }
+
+  async function readDayDisk(stamp) {
+    if (dayMem.has(stamp)) return;
+    try {
+      const parsed = JSON.parse(
+        await fsp.readFile(dayCachePath(stamp), 'utf8'),
+      );
+      if (Number.isFinite(parsed?.at) && Array.isArray(parsed?.hours)) {
+        dayMem.set(stamp, parsed);
+      }
+    } catch {
+      /* no disk cache yet */
+    }
+  }
+
+  async function serveDay(stamp, sendJson) {
+    await readDayDisk(stamp);
+    const entry = dayMem.get(stamp) || null;
+    const ttl = entry?.missing ? DAY_MISSING_TTL_MS : dayTtl(stamp);
+    const payload = (e, stale) => ({
+      iso: 'nyiso',
+      kind: 'da',
+      date: stamp,
+      fetchedAt: e.at,
+      stale,
+      ttlMs: dayTtl(stamp),
+      hours: e.hours,
+      nodes: e.nodes,
+    });
+    if (entry && Date.now() - entry.at < ttl) {
+      if (entry.missing)
+        sendJson(404, {
+          error: `NYISO day-ahead file for ${stamp} is not posted yet`,
+        });
+      else sendJson(200, payload(entry, false));
+      return;
+    }
+    if (!dayInflight.has(stamp)) {
+      dayInflight.set(
+        stamp,
+        fetchNyisoDayFile(stamp)
+          .then(async (fresh) => {
+            if (!fresh) {
+              dayMem.set(stamp, { at: Date.now(), missing: true });
+              return null;
+            }
+            dayMem.set(stamp, fresh);
+            try {
+              await fsp.mkdir(CACHE_DIR, { recursive: true });
+              await fsp.writeFile(
+                dayCachePath(stamp),
+                JSON.stringify(fresh),
+                'utf8',
+              );
+            } catch (err) {
+              console.warn(
+                '[lmp-proxy] day cache write failed:',
+                err?.message || err,
+              );
+            }
+            return fresh;
+          })
+          .catch((err) => {
+            console.warn(
+              `[lmp-proxy] nyiso day ${stamp} failed (${err?.message || err}); serving cache if any`,
+            );
+            return undefined;
+          })
+          .finally(() => {
+            dayInflight.delete(stamp);
+          }),
+      );
+    }
+    const fresh = await dayInflight.get(stamp);
+    if (fresh) sendJson(200, payload(fresh, false));
+    else if (fresh === null)
+      sendJson(404, {
+        error: `NYISO day-ahead file for ${stamp} is not posted yet`,
+      });
+    else if (entry && !entry.missing) sendJson(200, payload(entry, true));
+    else
+      sendJson(502, {
+        error: `nyiso day ${stamp} fetch failed and no cache available`,
+      });
+  }
+
   function buildPayload(iso, entry, stale) {
     return {
       iso,
@@ -212,6 +345,25 @@ export function lmpProxy() {
         const iso = String(query.get('iso') || '').toLowerCase();
         if (!ISOS.has(iso)) {
           sendJson(400, { error: 'iso must be nyiso or spp' });
+          return;
+        }
+        const date = String(query.get('date') || '').trim();
+        if (date) {
+          if (iso !== 'nyiso') {
+            sendJson(404, {
+              error:
+                'SPP publishes no keyless day-ahead archive; use the private data seam',
+            });
+            return;
+          }
+          if (!dayStampAllowed(date)) {
+            sendJson(400, {
+              error:
+                'date must be YYYYMMDD within the last ten days through tomorrow',
+            });
+            return;
+          }
+          await serveDay(date, sendJson);
           return;
         }
         await readDiskOnce(iso);

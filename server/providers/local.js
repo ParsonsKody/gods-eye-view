@@ -5,6 +5,7 @@ import { firmsProxy } from './firms.js';
 import { lmpProxy } from './lmp.js';
 import { interfaceFlowsProxy } from './interfaceFlows.js';
 import { gridProxy } from './grid.js';
+import { privateDataProxy } from './privateData.js';
 import { terrainHeightsProxy } from './terrain.js';
 import { adsbdbProxy } from './aircraft/enrichment.js';
 import { overpassProxy } from './overpass.js';
@@ -32,6 +33,7 @@ function localProviderPlugins() {
     lmpProxy(),
     interfaceFlowsProxy(),
     gridProxy(),
+    privateDataProxy(),
     rocketLaunchesProxy(),
     terrainHeightsProxy(),
     adsbdbProxy(),

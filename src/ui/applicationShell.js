@@ -1,4 +1,6 @@
 import { createStateChannel } from '../app/stateChannel.js';
+import { timeCursor } from '../data/timeCursor.js';
+import { mountTimeCursorBar } from './timeCursorBar.js';
 import { setSplitFlapText } from '../splitFlap.js';
 import { UiLifetime } from './uiLifetime.js';
 import { RecordingControls } from './recordingControls.js';
@@ -420,6 +422,7 @@ export class StyleManager {
           mapStack,
           panelState,
           styleParams,
+          timeCursorMs,
         } = state || {};
         // Ignore the retired 'ai-edit' style from older share links.
         if (style && style !== 'normal' && style !== 'ai-edit') {
@@ -517,6 +520,7 @@ export class StyleManager {
           ? this._setMapStack(mapStack, { syncShare: false })
           : Promise.resolve();
         if (panelState) this._restorePanelState(panelState);
+        if (timeCursorMs !== undefined) timeCursor.set(timeCursorMs);
         await mapStackRestore;
         this._syncShareState();
       },
@@ -562,6 +566,13 @@ export class StyleManager {
     // from deterministic markup defaults instead of recipient-local panel
     // preferences. Encoded panel fields are applied after all panels exist.
     this._initialShareState = this.shareLinkManager.parseInitialHash();
+    // Energy-layer hour cursor: shared through the `t` hash param, driven by
+    // the time bar, which shows itself while a layer can honour an hour.
+    this.shareLinkManager.setTimeCursorProvider(() => timeCursor.get());
+    this._timeCursorUnsubscribe = timeCursor.subscribe(() =>
+      this.shareLinkManager.onTimeCursorChange(),
+    );
+    this._timeCursorBar = mountTimeCursorBar();
 
     this._models3dModeBtns = [
       document.getElementById('models3d-mode-proximity'),

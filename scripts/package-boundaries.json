@@ -441,6 +441,7 @@
       "src/data/installationFeedback.js",
       "src/data/layerState.js",
       "src/data/militaryAwarenessEngine.js",
+      "src/data/timeCursor.js",
       "src/keySetupCore.mjs",
       "src/loadingFeedback.js",
       "src/locationStatus.js",
@@ -515,6 +516,7 @@
       "src/ui/shellFeedback.js",
       "src/ui/styleParameters.js",
       "src/ui/surfaceKeyboard.js",
+      "src/ui/timeCursorBar.js",
       "src/ui/visualEffects.js",
       "src/ui/visualInput.js",
       "src/ui/visualPresets.js",
@@ -547,7 +549,8 @@
       "src/ui/styles/command-dock-sliding.css",
       "src/ui/styles/voice-cost.css",
       "src/ui/styles/first-run.css",
-      "src/ui/styles/provider-settings.css"
+      "src/ui/styles/provider-settings.css",
+      "src/ui/styles/time-cursor.css"
     ],
     "external": []
   },

@@ -15,6 +15,8 @@ import {
   formatIntervalEt,
   lmpCardCopy,
   lmpLegend,
+  easternStampToMs,
+  parseNyisoDayFile,
 } from './lmpFeeds.js';
 
 const NYISO_TAIL = [
@@ -230,4 +232,38 @@ test('legend counts nodes by congestion sign and constraints', () => {
     ],
   );
   assert.equal(legend[3].color, CONSTRAINT_COLOR);
+});
+
+test('easternStampToMs handles daylight, standard, the repeated fall-back hour and the gap', () => {
+  assert.equal(easternStampToMs('09/13/2026 00:00'), Date.UTC(2026, 8, 13, 4));
+  assert.equal(easternStampToMs('01/15/2026 23:00'), Date.UTC(2026, 0, 16, 4));
+  const first = easternStampToMs('11/01/2026 01:00', 0);
+  const second = easternStampToMs('11/01/2026 01:00', 1);
+  assert.equal(second - first, 3_600_000);
+  assert.equal(easternStampToMs('03/08/2026 02:00'), null);
+  assert.equal(easternStampToMs('garbage'), null);
+});
+
+test('parseNyisoDayFile builds hourly columns per node with the sign flipped', () => {
+  const text = [
+    'Time Stamp,Name,PTID,LBMP ($/MWHr),Marginal Cost Losses ($/MWHr),Marginal Cost Congestion ($/MWHr)',
+    '09/13/2026 00:00,ALPHA,1001,40.00,2.00,-3.00',
+    '09/13/2026 00:00,"BETA, THE",1002,41.00,2.00,0.00',
+    '09/13/2026 01:00,ALPHA,1001,42.00,2.00,1.00',
+    '',
+  ].join('\n');
+  const parsed = parseNyisoDayFile(text);
+  assert.deepEqual(parsed.hours, [
+    Date.UTC(2026, 8, 13, 4),
+    Date.UTC(2026, 8, 13, 5),
+  ]);
+  const alpha = parsed.nodes.find((n) => n.ptid === '1001');
+  assert.equal(alpha.id, 'nyiso:1001');
+  assert.deepEqual(alpha.lmp, [40, 42]);
+  assert.deepEqual(alpha.mcc, [3, -1]);
+  assert.deepEqual(alpha.mec, [35, 41]);
+  const beta = parsed.nodes.find((n) => n.ptid === '1002');
+  assert.equal(beta.name, 'BETA, THE');
+  assert.deepEqual(beta.lmp, [41, null]);
+  assert.equal(parseNyisoDayFile(''), null);
 });

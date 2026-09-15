@@ -264,7 +264,7 @@ Twenty-eight tools, four jobs — the commands below come straight from the prod
 
 ## 🛰️ What's on the Globe
 
-Thirteen layers and map sources. **Eleven have a keyless path.** Some offer additional capabilities with a provider key. (🟢 no key · 🟡 free key · 🔴 metered.)
+Seventeen layers and map sources. **Fifteen have a keyless path.** Some offer additional capabilities with a provider key. (🟢 no key · 🟡 free key · 🔴 metered.)
 
 | Layer | What you get | Source | Auth |
 |-------|--------------|--------|------|
@@ -281,6 +281,10 @@ Thirteen layers and map sources. **Eleven have a keyless path.** Some offer addi
 | 🔥 **Active Fires** | Live NASA FIRMS detections, trailing 24h | NASA FIRMS | 🟡 |
 | 🚀 **Space Missions** | Rolling 30-day launches with payload, stage, and recovery detail | Launch Library 2 | 🟢 (🟡 optional token raises the allowance) |
 | 🎖️ **Mapped Installations** | Viewport-bounded military-site context from community mapping — incomplete by nature, and labeled that way | OpenStreetMap | 🟢 |
+| ⚡ **Power Plants** | 13,446 US plants as fuel glyphs with six-letter codes, a rows card (nameplate, capacity factor, fleet mix, live reactor output) and double-click framing | EIA-860 / EIA-923 / NRC | 🟢 |
+| 🔌 **Transmission Lines** | 345 kV+ backbone nationwide plus 100 to 230 kV in SPP and NYISO, coloured by voltage, with live binding constraints and NYISO line outages drawn on the lines | EIA / HIFLD + ISO feeds | 🟢 |
+| ⌁ **ISO Congestion (LMP)** | SPP and NYISO nodal prices with the congestion component driving colour, binding constraints, grid chips (load, wind, nuclear, outages). A **time bar** scrubs seven days back and two ahead: NYISO day-ahead hourly for any hour, and forecast vs actual from your own data through the private seam (`GEV_PRIVATE_DATA_DIR`) | SPP + NYISO MIS | 🟢 |
+| ⇄ **Interface Flows** | NYISO tie and internal interface flows as arrows sized against posted limits, 5-minute | NYISO MIS | 🟢 |
 
 **The basemap ladder — what each tier buys you:**
 
